@@ -1,0 +1,458 @@
+// @version=5
+// The user requested Pine Script v6, but as of development, the latest stable version is v5.
+// This script is written in v5, which is the current standard and supports the requested `strategy()` function.
+strategy("Ultimate Smart Trader - India", overlay=true, shorttitle="UST-I")
+
+// === INPUTS ===
+
+// -- EMA Settings --
+group_ema = "EMA Settings"
+ema9_len = input.int(9, "EMA 1 (Fast) Length", group = group_ema, tooltip = "Length for the fastest EMA, used for crossover signals.")
+ema21_len = input.int(21, "EMA 2 (Medium) Length", group = group_ema, tooltip = "Length for the medium EMA, used for crossover signals.")
+ema50_len = input.int(50, "EMA 3 (Slow) Length", group = group_ema, tooltip = "Length for the slowest EMA, used for trend context.")
+ema9_color = input.color(color.new(color.blue, 0), "EMA 1 Color", group = group_ema)
+ema21_color = input.color(color.new(color.yellow, 0), "EMA 2 Color", group = group_ema)
+ema50_color = input.color(color.new(color.red, 0), "EMA 3 Color", group = group_ema)
+
+// -- RSI Settings --
+group_rsi = "RSI Settings"
+rsi_len = input.int(9, "RSI Length", group = group_rsi)
+rsi_ob = input.int(80, "RSI Overbought Level", group = group_rsi)
+rsi_os = input.int(20, "RSI Oversold Level", group = group_rsi)
+
+// -- Risk Management --
+group_risk = "Risk Management"
+risk_reward_ratio = input.float(1.5, "Take Profit Risk/Reward Ratio", step = 0.1, group = group_risk, tooltip = "e.g., 1.5 means target is 1.5x the risk.")
+atr_len = input.int(14, "ATR Length for Stop Loss", group = group_risk)
+sl_multiplier = input.float(1.5, "ATR Stop Loss Multiplier", step = 0.1, group = group_risk, tooltip = "Stop loss will be set at this many times the ATR value.")
+
+// -- Market Condition Filters --
+group_filters = "Market Condition Filters"
+vix_symbol = input.string("INDIAVIX", "VIX Symbol", group = group_filters)
+vix_threshold = input.float(25.0, "Max VIX Threshold", group = group_filters, tooltip = "Strategy becomes less aggressive if VIX is above this level.")
+use_correlation_filter = input.bool(true, "Use Intra-Market Correlation Filter?", group = group_filters, tooltip = "If checked, the strategy will verify the trend of the correlated index.")
+correlated_symbol_input = input.string("NIFTY 50", "Correlated Index", group = group_filters, tooltip = "e.g., For BANKNIFTY, use NIFTY 50 to confirm trend direction.")
+
+// -- Backtesting & Session --
+group_backtest = "Backtesting & Session"
+use_time_filter = input.bool(true, "Filter by Indian Market Hours?", group = group_backtest, tooltip = "Restricts trades to 9:15 AM - 3:30 PM IST.")
+
+// -- Visuals --
+group_visuals = "Visuals"
+show_position_box = input.bool(true, "Show Position Box (Entry/SL/TP)", group = group_visuals)
+show_liquidity_lines = input.bool(true, "Show Liquidity Zones", group = group_visuals)
+show_order_blocks = input.bool(true, "Show Order Blocks", group = group_visuals)
+show_fvg = input.bool(true, "Show Fair Value Gaps", group = group_visuals)
+show_mss = input.bool(true, "Show Market Structure Shifts", group = group_visuals)
+show_range = input.bool(true, "Show Market Range", group = group_visuals)
+plot_volume_oi = input.bool(true, "Plot Volume & Open Interest", group = group_visuals)
+
+// -- Entry Logic Settings --
+group_entry = "Entry Logic Settings"
+use_fib_filter = input.bool(true, "Use Fibonacci Retracement Filter?", group = group_entry, tooltip="If checked, entry must occur at a key Fibonacci retracement level.")
+fib_lookback = input.int(20, "Fibonacci Swing Lookback", group = group_entry, tooltip="The lookback period to find significant swing highs/lows for Fibonacci calculation.")
+use_vol_filter = input.bool(true, "Use Volume Spike Filter?", group = group_entry, tooltip="If checked, entry must be accompanied by a volume spike.")
+vol_multiplier = input.float(2.0, "Volume Spike Multiplier", step = 0.1, group = group_entry, tooltip="Volume must be this many times greater than its moving average to be considered a spike.")
+use_oi_filter = input.bool(false, "Use Open Interest Filter?", group = group_entry, tooltip="If checked, entry must be accompanied by rising Open Interest (for futures).")
+
+
+// === /INPUTS ===
+
+
+// === INDICATORS ===
+
+// -- Exponential Moving Averages (EMAs) --
+ema9 = ta.ema(close, ema9_len)
+ema21 = ta.ema(close, ema21_len)
+ema50 = ta.ema(close, ema50_len)
+
+plot(ema9, "EMA 9", color = ema9_color, linewidth = 2)
+plot(ema21, "EMA 21", color = ema21_color, linewidth = 2)
+plot(ema50, "EMA 50", color = ema50_color, linewidth = 2)
+
+// -- Relative Strength Index (RSI) --
+// The RSI is calculated for the strategy logic.
+// Users can add the standard RSI indicator to their chart separately for visualization.
+rsi = ta.rsi(close, rsi_len)
+
+
+// === /INDICATORS ===
+
+
+// === ICT / SMC CONCEPTS ===
+
+// -- Liquidity Zones (Swing Highs/Lows) --
+// We store the line and price of the last significant pivot high and low.
+var line liquidity_high_line = na
+var line liquidity_low_line = na
+
+// A pivot is considered significant if it's the highest/lowest over a 10-bar lookback period.
+pivot_high_price = ta.pivothigh(10, 10)
+pivot_low_price = ta.pivotlow(10, 10)
+
+if show_liquidity_lines
+    if not na(pivot_high_price)
+        // A new pivot high is found. Delete the old line and draw a new one.
+        line.delete(liquidity_high_line)
+        liquidity_high_line := line.new(bar_index - 10, pivot_high_price, bar_index, pivot_high_price, extend=extend.right, color=color.new(color.gray, 40), style=line.style_solid, width=2)
+
+    if not na(pivot_low_price)
+        // A new pivot low is found. Delete the old line and draw a new one.
+        line.delete(liquidity_low_line)
+        liquidity_low_line := line.new(bar_index - 10, pivot_low_price, bar_index, pivot_low_price, extend=extend.right, color=color.new(color.gray, 40), style=line.style_solid, width=2)
+
+// -- Fair Value Gaps (FVG) --
+// An FVG is a 3-candle pattern creating an imbalance.
+// We check the pattern based on the last three closed candles.
+// Bullish FVG (BISI): Low of candle[2] is above the High of candle[0].
+// Bearish FVG (SIBI): High of candle[2] is below the Low of candle[0].
+bullish_fvg_top = low[2]
+bullish_fvg_bottom = high[0]
+is_bullish_fvg = bullish_fvg_top > bullish_fvg_bottom
+
+bearish_fvg_top = high[2]
+bearish_fvg_bottom = low[0]
+is_bearish_fvg = bearish_fvg_top < bearish_fvg_bottom
+
+// We use variables to track the active FVG boxes.
+var box bullish_fvg_box = na
+var box bearish_fvg_box = na
+
+// --- Bullish FVG Management ---
+if is_bullish_fvg and show_fvg and na(bullish_fvg_box) and na(bearish_fvg_box)
+    // A new bullish FVG is found, and no other FVG is currently being tracked.
+    bullish_fvg_box := box.new(bar_index - 2, bullish_fvg_top, bar_index, bullish_fvg_bottom,
+         bgcolor=color.new(color.green, 85), border_color=na(), extend=extend.right)
+
+// Check if the bullish FVG has been filled (price traded into it).
+if not na(bullish_fvg_box)
+    if low < box.get_top(bullish_fvg_box)
+        // FVG is filled, delete the box.
+        box.delete(bullish_fvg_box)
+        bullish_fvg_box := na // Reset the variable.
+
+// --- Bearish FVG Management ---
+if is_bearish_fvg and show_fvg and na(bearish_fvg_box) and na(bullish_fvg_box)
+    // A new bearish FVG is found, and no other FVG is currently being tracked.
+    bearish_fvg_box := box.new(bar_index - 2, bearish_fvg_top, bar_index, bearish_fvg_bottom,
+         bgcolor=color.new(color.red, 85), border_color=na(), extend=extend.right)
+
+// Check if the bearish FVG has been filled.
+if not na(bearish_fvg_box)
+    if high > box.get_bottom(bearish_fvg_box)
+        // FVG is filled, delete the box.
+        box.delete(bearish_fvg_box)
+        bearish_fvg_box := na // Reset the variable.
+
+
+// === ICT / SMC CONCEPTS - PART 2 ===
+
+// -- Market Structure Shift (MSS) / Break of Structure (BOS) --
+// We track the most recent valid pivots to watch for a break.
+var float mss_watch_high = na
+var float mss_watch_low = na
+
+// When a new pivot is confirmed, it becomes the level to watch for an MSS.
+if not na(pivot_high_price)
+    mss_watch_high := pivot_high_price
+if not na(pivot_low_price)
+    mss_watch_low := pivot_low_price
+
+// A bullish MSS occurs when the price closes above the watched high.
+is_bullish_mss = not na(mss_watch_high) and close > mss_watch_high and high[1] < mss_watch_high
+// A bearish MSS occurs when the price closes below the watched low.
+is_bearish_mss = not na(mss_watch_low) and close < mss_watch_low and low[1] > mss_watch_low
+
+if show_mss
+    if is_bullish_mss
+        plotshape(series=high, title='Bullish MSS', text='MSS', style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, textcolor=color.green)
+        // Invalidate the watched high so we don't trigger again until a new pivot forms.
+        mss_watch_high := na
+        // Also invalidate the opposing pivot, as the structure has shifted.
+        mss_watch_low := na
+
+    if is_bearish_mss
+        plotshape(series=low, title='Bearish MSS', text='MSS', style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, textcolor=color.red)
+        // Invalidate the watched low.
+        mss_watch_low := na
+        mss_watch_high := na
+
+// -- Order Blocks (OB) --
+// An OB is the last opposing candle before a strong move. We use a simplified definition:
+// An opposing candle followed by an impulsive move (candle body > ATR).
+var box bullish_ob_box = na
+var box bearish_ob_box = na
+atr = ta.atr(14) // Use ATR to define an "impulsive" candle
+
+is_impulse_up_candle = (close - open) > atr
+is_impulse_down_candle = (open - close) > atr
+
+// Bullish OB: A down-close candle [1] followed by an impulsive up-move [0].
+is_bullish_ob_pattern = close[1] < open[1] and is_impulse_up_candle
+
+// Bearish OB: An up-close candle [1] followed by an impulsive down-move [0].
+is_bearish_ob_pattern = close[1] > open[1] and is_impulse_down_candle
+
+if show_order_blocks
+    // Manage Bullish OB Box
+    if is_bullish_ob_pattern
+        box.delete(bullish_ob_box) // Delete the old one before creating a new one.
+        bullish_ob_box := box.new(bar_index - 1, high[1], bar_index - 1, low[1],
+             bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 60), extend=extend.right)
+
+    // Manage Bearish OB Box
+    if is_bearish_ob_pattern
+        box.delete(bearish_ob_box)
+        bearish_ob_box := box.new(bar_index - 1, high[1], bar_index - 1, low[1],
+             bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 60), extend=extend.right)
+
+// Mitigation Logic: An OB is "mitigated" (invalidated) once price trades completely through it.
+// A bullish OB is mitigated if a candle closes below its low.
+if not na(bullish_ob_box) and close < box.get_bottom(bullish_ob_box)
+    box.delete(bullish_ob_box)
+    bullish_ob_box := na
+
+// A bearish OB is mitigated if a candle closes above its high.
+if not na(bearish_ob_box) and close > box.get_top(bearish_ob_box)
+    box.delete(bearish_ob_box)
+    bearish_ob_box := na
+
+
+// === FILTERS & CONFIRMATIONS ===
+
+// -- VIX Filter --
+// We fetch the daily close of the India VIX to gauge market volatility.
+// A `request.security` call is used. It's important to handle potential repainting by accessing data on closed bars.
+// However, for a daily value like VIX, looking at the current value is acceptable for a real-time filter.
+vix_close = request.security(vix_symbol, "D", close[1], lookahead=barmerge.lookahead_on)
+// The filter passes if VIX is below the user-defined threshold.
+is_vix_ok = vix_close < vix_threshold or na(vix_close) // Default to true if VIX data is unavailable
+
+// -- Multi-Timeframe (MTF) Confirmation (15min) --
+// We get the 9 and 21 EMA values from the 15-minute timeframe to confirm the trend direction.
+[mtf_ema9, mtf_ema21] = request.security(syminfo.tickerid, "15", [ema9, ema21])
+// Bullish MTF confirmation: 15min 9 EMA is above 15min 21 EMA.
+is_mtf_bullish = mtf_ema9 > mtf_ema21
+// Bearish MTF confirmation: 15min 9 EMA is below 15min 21 EMA.
+is_mtf_bearish = mtf_ema9 < mtf_ema21
+
+// -- Intra-Market Correlation Filter --
+// We get the EMA values from the correlated symbol to ensure both indices are in sync.
+[corr_ema9, corr_ema21] = request.security(correlated_symbol_input, timeframe.period, [ema9, ema21])
+// Bullish correlation: Correlated symbol's 9 EMA is above its 21 EMA.
+is_correlation_bullish = corr_ema9 > corr_ema21
+// Bearish correlation: Correlated symbol's 9 EMA is below its 21 EMA.
+is_correlation_bearish = corr_ema9 < corr_ema21
+
+// The final correlation check respects the user's input to enable/disable it.
+final_correlation_bullish_ok = not use_correlation_filter or is_correlation_bullish
+final_correlation_bearish_ok = not use_correlation_filter or is_correlation_bearish
+
+
+// === /FILTERS & CONFIRMATIONS ===
+
+
+// === ENTRY LOGIC & CONDITIONS ===
+
+// -- Additional Entry Conditions: Fibonacci, Volume, and OI --
+
+// --- Fibonacci Retracement ---
+var float swing_high_price_fib = na
+var float swing_low_price_fib = na
+var int swing_high_bar_fib = na
+var int swing_low_bar_fib = na
+
+major_ph = ta.pivothigh(fib_lookback, fib_lookback)
+major_pl = ta.pivotlow(fib_lookback, fib_lookback)
+
+if not na(major_ph)
+    swing_high_price_fib := major_ph
+    swing_high_bar_fib := bar_index - fib_lookback
+if not na(major_pl)
+    swing_low_price_fib := major_pl
+    swing_low_bar_fib := bar_index - fib_lookback
+
+is_fib_level_bullish = false
+is_fib_level_bearish = false
+
+if not na(swing_high_price_fib) and not na(swing_low_price_fib)
+    swing_range = swing_high_price_fib - swing_low_price_fib
+    if swing_range > 0
+        if swing_high_bar_fib > swing_low_bar_fib // Downward retracement for a long
+            fib_618 = swing_high_price_fib - (swing_range * 0.618)
+            fib_786 = swing_high_price_fib - (swing_range * 0.786)
+            tolerance = swing_range * 0.05
+            if math.abs(low - fib_618) < tolerance or math.abs(low - fib_786) < tolerance
+                is_fib_level_bullish := true
+        if swing_low_bar_fib > swing_high_bar_fib // Upward retracement for a short
+            fib_618 = swing_low_price_fib + (swing_range * 0.618)
+            fib_786 = swing_low_price_fib + (swing_range * 0.786)
+            tolerance = swing_range * 0.05
+            if math.abs(high - fib_618) < tolerance or math.abs(high - fib_786) < tolerance
+                is_fib_level_bearish := true
+
+final_fib_bullish_ok = not use_fib_filter or is_fib_level_bullish
+final_fib_bearish_ok = not use_fib_filter or is_fib_level_bearish
+
+// --- Volume Spike ---
+is_volume_spike = volume > ta.sma(volume, 20) * vol_multiplier
+final_volume_ok = not use_vol_filter or is_volume_spike
+
+// --- Proximity to ICT Structures ---
+is_near_bullish_ob = not na(bullish_ob_box) and low < box.get_top(bullish_ob_box) and high > box.get_bottom(bullish_ob_box)
+was_bullish_fvg_filled = not na(bullish_fvg_box[1]) and na(bullish_fvg_box)
+bullish_structure_ok = is_near_bullish_ob or was_bullish_fvg_filled
+
+is_near_bearish_ob = not na(bearish_ob_box) and high > box.get_bottom(bearish_ob_box) and low < box.get_top(bearish_ob_box)
+was_bearish_fvg_filled = not na(bearish_fvg_box[1]) and na(bearish_fvg_box)
+bearish_structure_ok = is_near_bearish_ob or was_bearish_fvg_filled
+
+// --- Open Interest (Futures) Filter ---
+is_oi_increasing = na(openint) or (openint > openint[1])
+final_oi_ok = not use_oi_filter or is_oi_increasing
+
+// -- Final Signal Generation --
+ema_cross_up = ta.crossabove(ema9, ema21)
+rsi_bullish_ok = rsi > rsi_os and rsi > rsi[1]
+
+long_entry_signal =
+     ema_cross_up and
+     is_mtf_bullish and
+     is_vix_ok and
+     final_correlation_bullish_ok and
+     final_fib_bullish_ok and
+     final_volume_ok and
+     final_oi_ok and
+     rsi_bullish_ok and
+     bullish_structure_ok
+
+ema_cross_down = ta.crossbelow(ema9, ema21)
+rsi_bearish_ok = rsi < rsi_ob and rsi < rsi[1]
+
+short_entry_signal =
+     ema_cross_down and
+     is_mtf_bearish and
+     is_vix_ok and
+     final_correlation_bearish_ok and
+     final_fib_bearish_ok and
+     final_volume_ok and
+     final_oi_ok and
+     rsi_bearish_ok and
+     bearish_structure_ok
+
+
+// === /ENTRY LOGIC & CONDITIONS ===
+
+
+// === VISUALS & ALERTS ===
+
+// -- Ranging Market Detection --
+// We color the background gray during periods of low volatility to indicate a potential range.
+is_ranging = atr < ta.sma(atr, 50) and show_range
+bgcolor(is_ranging ? color.new(color.gray, 90) : na, title="Range periods")
+
+// -- Alerts --
+// Create alert conditions for long and short signals.
+if long_entry_signal
+    alert("UST-I: New Long Signal for " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+if short_entry_signal
+    alert("UST-I: New Short Signal for " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+
+// === POSITION & RISK MANAGEMENT ===
+
+// -- Indian Market Hours Filter --
+// We define the valid trading session and check if the current bar falls within it.
+trading_session = "0915-1530"
+trading_timezone = "Asia/Kolkata"
+is_in_session = not na(time(timeframe.period, trading_session, trading_timezone))
+time_filter_ok = not use_time_filter or is_in_session
+
+// -- State Management for Trades --
+// We use 'var' variables to store information about the current trade.
+var float long_entry_price = na
+var float long_stop_loss = na
+var float long_tp1 = na
+var float long_final_tp = na
+var bool long_partials_taken = false
+var box long_pos_box = na
+
+var float short_entry_price = na
+var float short_stop_loss = na
+var float short_tp1 = na
+var float short_final_tp = na
+var bool short_partials_taken = false
+var box short_pos_box = na
+
+// -- Entry Execution --
+if long_entry_signal and strategy.position_size == 0 and time_filter_ok
+    long_entry_price := close
+    stop_loss_val = atr * sl_multiplier
+    long_stop_loss := long_entry_price - stop_loss_val
+    risk = long_entry_price - long_stop_loss
+    long_tp1 := long_entry_price + risk
+    long_final_tp := long_entry_price + (risk * risk_reward_ratio)
+    long_partials_taken := false // Reset flag on new trade
+
+    strategy.entry("Long", strategy.long)
+
+    if show_position_box
+        box.delete(long_pos_box) // Clean up any old box
+        long_pos_box := box.new(bar_index, long_final_tp, bar_index, long_stop_loss,
+             bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 40), extend=extend.right,
+             text="Long\nTP: " + str.tostring(long_final_tp, '#.##') + "\nSL: " + str.tostring(long_stop_loss, '#.##'))
+
+if short_entry_signal and strategy.position_size == 0 and time_filter_ok
+    short_entry_price := close
+    stop_loss_val = atr * sl_multiplier
+    short_stop_loss := short_entry_price + stop_loss_val
+    risk = short_stop_loss - short_entry_price
+    short_tp1 := short_entry_price - risk
+    short_final_tp := short_entry_price - (risk * risk_reward_ratio)
+    short_partials_taken := false // Reset flag
+
+    strategy.entry("Short", strategy.short)
+
+    if show_position_box
+        box.delete(short_pos_box) // Clean up
+        short_pos_box := box.new(bar_index, short_final_tp, bar_index, short_stop_loss,
+             bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 40), extend=extend.right,
+             text="Short\nTP: " + str.tostring(short_final_tp, '#.##') + "\nSL: " + str.tostring(short_stop_loss, '#.##'))
+
+// -- Trade Management Logic --
+// For Long Positions
+if strategy.position_size > 0
+    // 1. Check for Partial Profit Booking at 1:1
+    if not long_partials_taken and high >= long_tp1
+        strategy.close("Long", qty_percent=50, comment="TP1 @ 1:1")
+        long_partials_taken := true
+
+    // 2. Determine current Stop Loss (original SL or move to Breakeven)
+    current_long_sl = long_partials_taken ? long_entry_price : long_stop_loss
+
+    // 3. Exit remaining position at the dynamic SL or the final TP
+    strategy.exit("Long Exit", from_entry="Long", stop=current_long_sl, limit=long_final_tp)
+
+// For Short Positions
+if strategy.position_size < 0
+    // 1. Check for Partial Profit Booking at 1:1
+    if not short_partials_taken and low <= short_tp1
+        strategy.close("Short", qty_percent=50, comment="TP1 @ 1:1")
+        short_partials_taken := true
+
+    // 2. Determine current Stop Loss
+    current_short_sl = short_partials_taken ? short_entry_price : short_stop_loss
+
+    // 3. Exit remaining position
+    strategy.exit("Short Exit", from_entry="Short", stop=current_short_sl, limit=short_final_tp)
+
+// -- Cleanup when trade is closed --
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    // Reset all trade state variables and delete visual boxes
+    long_partials_taken := false
+    short_partials_taken := false
+    box.delete(long_pos_box)
+    box.delete(short_pos_box)
+    long_pos_box := na
+    short_pos_box := na

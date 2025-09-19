@@ -165,14 +165,14 @@ is_bearish_mss = not na(mss_watch_low) and close < mss_watch_low and low[1] > ms
 
 if show_mss
     if is_bullish_mss
-        plotshape(series=high, title='Bullish MSS', text='MSS', style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, textcolor=color.green)
+        plotshape(high, title='Bullish MSS', text='MSS', style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, textcolor=color.green)
         // Invalidate the watched high so we don't trigger again until a new pivot forms.
         mss_watch_high := na
         // Also invalidate the opposing pivot, as the structure has shifted.
         mss_watch_low := na
 
     if is_bearish_mss
-        plotshape(series=low, title='Bearish MSS', text='MSS', style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, textcolor=color.red)
+        plotshape(low, title='Bearish MSS', text='MSS', style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, textcolor=color.red)
         // Invalidate the watched low.
         mss_watch_low := na
         mss_watch_high := na

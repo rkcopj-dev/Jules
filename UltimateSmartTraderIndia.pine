@@ -122,7 +122,7 @@ var box bearish_fvg_box = na
 if is_bullish_fvg and show_fvg and na(bullish_fvg_box) and na(bearish_fvg_box)
     // A new bullish FVG is found, and no other FVG is currently being tracked.
     bullish_fvg_box := box.new(bar_index - 2, bullish_fvg_top, bar_index, bullish_fvg_bottom,
-         bgcolor=color.new(color.green, 85), border_color=na(), extend=extend.right)
+         border_color=na(), bgcolor=color.new(color.green, 85), extend=extend.right)
 
 // Check if the bullish FVG has been filled (price traded into it).
 if not na(bullish_fvg_box)
@@ -135,7 +135,7 @@ if not na(bullish_fvg_box)
 if is_bearish_fvg and show_fvg and na(bearish_fvg_box) and na(bullish_fvg_box)
     // A new bearish FVG is found, and no other FVG is currently being tracked.
     bearish_fvg_box := box.new(bar_index - 2, bearish_fvg_top, bar_index, bearish_fvg_bottom,
-         bgcolor=color.new(color.red, 85), border_color=na(), extend=extend.right)
+         border_color=na(), bgcolor=color.new(color.red, 85), extend=extend.right)
 
 // Check if the bearish FVG has been filled.
 if not na(bearish_fvg_box)
@@ -198,13 +198,13 @@ if show_order_blocks
     if is_bullish_ob_pattern
         box.delete(bullish_ob_box) // Delete the old one before creating a new one.
         bullish_ob_box := box.new(bar_index - 1, high[1], bar_index - 1, low[1],
-             bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 60), extend=extend.right)
+             border_color=color.new(color.green, 60), bgcolor=color.new(color.green, 85), extend=extend.right)
 
     // Manage Bearish OB Box
     if is_bearish_ob_pattern
         box.delete(bearish_ob_box)
         bearish_ob_box := box.new(bar_index - 1, high[1], bar_index - 1, low[1],
-             bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 60), extend=extend.right)
+             border_color=color.new(color.red, 60), bgcolor=color.new(color.red, 85), extend=extend.right)
 
 // Mitigation Logic: An OB is "mitigated" (invalidated) once price trades completely through it.
 // A bullish OB is mitigated if a candle closes below its low.
@@ -400,7 +400,7 @@ if long_entry_signal and strategy.position_size == 0 and time_filter_ok
     if show_position_box
         box.delete(long_pos_box) // Clean up any old box
         long_pos_box := box.new(bar_index, long_final_tp, bar_index, long_stop_loss,
-             bgcolor=color.new(color.green, 85), border_color=color.new(color.green, 40), extend=extend.right,
+             border_color=color.new(color.green, 40), bgcolor=color.new(color.green, 85), extend=extend.right,
              text="Long\nTP: " + str.tostring(long_final_tp, '#.##') + "\nSL: " + str.tostring(long_stop_loss, '#.##'))
 
 if short_entry_signal and strategy.position_size == 0 and time_filter_ok
@@ -417,7 +417,7 @@ if short_entry_signal and strategy.position_size == 0 and time_filter_ok
     if show_position_box
         box.delete(short_pos_box) // Clean up
         short_pos_box := box.new(bar_index, short_final_tp, bar_index, short_stop_loss,
-             bgcolor=color.new(color.red, 85), border_color=color.new(color.red, 40), extend=extend.right,
+             border_color=color.new(color.red, 40), bgcolor=color.new(color.red, 85), extend=extend.right,
              text="Short\nTP: " + str.tostring(short_final_tp, '#.##') + "\nSL: " + str.tostring(short_stop_loss, '#.##'))
 
 // -- Trade Management Logic --

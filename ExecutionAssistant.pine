@@ -1,0 +1,259 @@
+//@version=6
+indicator("Execution Assistant", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// -----------------------------------------------------------------------------
+// INPUTS
+// -----------------------------------------------------------------------------
+grp_setup = "Setup & Context"
+len_left   = input.int(5, "Structure Left Bars", minval=1, group=grp_setup)
+len_right  = input.int(5, "Structure Right Bars", minval=1, group=grp_setup)
+htf_tf     = input.timeframe("240", "HTF Bias Timeframe", group=grp_setup)
+liq_lookback = input.int(50, "Liquidity Lookback", minval=10, group=grp_setup)
+
+grp_ob = "Order Blocks"
+ob_atr_mult = input.float(2.0, "OB Impulse ATR Multiplier", minval=0.1, group=grp_ob)
+show_ob = input.bool(true, "Show Order Blocks", group=grp_ob)
+col_ob_bull = input.color(color.new(color.green, 80), "Bullish OB Color", group=grp_ob)
+col_ob_bear = input.color(color.new(color.red, 80), "Bearish OB Color", group=grp_ob)
+
+// -----------------------------------------------------------------------------
+// INTERNAL CONTEXT LOGIC (HTF, Structure, Liquidity)
+// -----------------------------------------------------------------------------
+
+// --- 1. HTF BIAS ---
+// Re-implementing the logic from Market Context for internal state
+get_htf_data() =>
+    [close, ta.ema(close, 50)]
+
+[htf_close, htf_ema50] = request.security(syminfo.tickerid, htf_tf, get_htf_data())
+
+bool htf_bullish = htf_close > htf_ema50
+bool htf_bearish = htf_close < htf_ema50
+// Note: We ignore "Range" logic for strict execution as requested (Buy/Sell only if strict bias).
+
+// --- 2. MARKET STRUCTURE (Pivots & CHoCH) ---
+ph = ta.pivothigh(len_left, len_right)
+pl = ta.pivotlow(len_left, len_right)
+
+// We need to know when a CHoCH happens immediately on the close
+var float active_high = na
+var float active_low = na
+var int trend = 0 // 1 Bull, -1 Bear
+
+// Update structural points
+if not na(ph)
+    active_high := ph
+if not na(pl)
+    active_low := pl
+
+// Detect CHoCH
+// Bullish CHoCH: Price breaks above the last Lower High (active_high) while in Bearish trend
+bool choch_bullish = false
+bool choch_bearish = false
+
+if barstate.isconfirmed
+    // Check breaks
+    if not na(active_high) and close > active_high
+        if trend != 1
+            choch_bullish := true // Reversal to Bullish
+            trend := 1
+            active_high := na // Reset
+        else
+            // BOS (Continuation) - not a CHoCH
+            active_high := na
+
+    if not na(active_low) and close < active_low
+        if trend != -1
+            choch_bearish := true // Reversal to Bearish
+            trend := -1
+            active_low := na
+        else
+            // BOS
+            active_low := na
+
+// --- 3. LIQUIDITY SWEEPS ---
+// We need to track if a sweep *recently* happened.
+// We will use arrays to track levels similar to Indicator 1, but purely for logic.
+
+var float[] bsl_prices = array.new_float()
+var float[] ssl_prices = array.new_float()
+
+// Maintain arrays
+if not na(ph)
+    array.push(bsl_prices, ph)
+    if array.size(bsl_prices) > liq_lookback
+        array.shift(bsl_prices)
+
+if not na(pl)
+    array.push(ssl_prices, pl)
+    if array.size(ssl_prices) > liq_lookback
+        array.shift(ssl_prices)
+
+// Detect Current Sweep
+bool sweep_bullish = false // Sweep of SSL (Bullish sign)
+bool sweep_bearish = false // Sweep of BSL (Bearish sign)
+
+// Check SSL Sweep (Low < Level, Close > Level)
+if array.size(ssl_prices) > 0
+    for i = array.size(ssl_prices) - 1 to 0
+        lvl = array.get(ssl_prices, i)
+        if low < lvl and close > lvl
+            sweep_bullish := true
+            array.remove(ssl_prices, i) // Consumed
+        else if close < lvl
+            // Invalidated/Broken
+            array.remove(ssl_prices, i)
+
+// Check BSL Sweep (High > Level, Close < Level)
+if array.size(bsl_prices) > 0
+    for i = array.size(bsl_prices) - 1 to 0
+        lvl = array.get(bsl_prices, i)
+        if high > lvl and close < lvl
+            sweep_bearish := true
+            array.remove(bsl_prices, i) // Consumed
+        else if close > lvl
+            // Invalidated
+            array.remove(bsl_prices, i)
+
+// -----------------------------------------------------------------------------
+// 4. ORDER BLOCK LOGIC
+// -----------------------------------------------------------------------------
+// Definition: Last opposite candle before a strong impulsive move.
+// Impulse: Body > ATR * Mult
+
+atr = ta.atr(14)
+is_impulse_up = (close - open) > (atr * ob_atr_mult) and close > open
+is_impulse_down = (open - close) > (atr * ob_atr_mult) and close < open
+
+// Potential OB Candidates (from previous candle)
+// Bullish OB candidate: Candle [1] was bearish (close < open)
+cand_bull_ob = close[1] < open[1]
+// Bearish OB candidate: Candle [1] was bullish (close > open)
+cand_bear_ob = close[1] > open[1]
+
+// Arrays to store active OBs
+var box[] bull_obs = array.new_box()
+var box[] bear_obs = array.new_box()
+
+// Add Bullish OB
+if is_impulse_up and cand_bull_ob
+    // The OB is the previous candle
+    top = high[1]
+    bottom = low[1]
+    b = box.new(bar_index - 1, top, bar_index + 5, bottom, border_color=na, bgcolor=col_ob_bull, extend=extend.right)
+    if show_ob
+        array.push(bull_obs, b)
+    else
+        box.delete(b) // Logic only if not showing, but strict request implies Visuals too? "Show Order Blocks" is an input.
+
+// Add Bearish OB
+if is_impulse_down and cand_bear_ob
+    top = high[1]
+    bottom = low[1]
+    b = box.new(bar_index - 1, top, bar_index + 5, bottom, border_color=na, bgcolor=col_ob_bear, extend=extend.right)
+    if show_ob
+        array.push(bear_obs, b)
+    else
+        box.delete(b)
+
+// Manage OBs (Mitigation)
+// Bullish OB: Mitigated if Close < Bottom
+if array.size(bull_obs) > 0
+    for i = array.size(bull_obs) - 1 to 0
+        b = array.get(bull_obs, i)
+        bot = box.get_bottom(b)
+        // Check mitigation
+        if close < bot
+            // Invalidated/Broken
+            box.delete(b)
+            array.remove(bull_obs, i)
+
+// Bearish OB: Mitigated if Close > Top
+if array.size(bear_obs) > 0
+    for i = array.size(bear_obs) - 1 to 0
+        b = array.get(bear_obs, i)
+        top = box.get_top(b)
+        if close > top
+            box.delete(b)
+            array.remove(bear_obs, i)
+
+// -----------------------------------------------------------------------------
+// 5. SIGNALS & STATE MACHINE
+// -----------------------------------------------------------------------------
+// Strict Sequence for BUY:
+// 1. HTF Bias = Bullish
+// 2. Sell-side Liquidity Swept (Wait for valid sweep)
+// 3. Price Taps Bullish OB (Inside active OB)
+// 4. Bullish CHoCH (Entry Trigger)
+
+// State Tracking
+var bool state_buy_sweep_ok = false
+var bool state_buy_ob_ok = false
+var bool state_sell_sweep_ok = false
+var bool state_sell_ob_ok = false
+
+// Reset states if HTF bias flips
+if htf_bearish
+    state_buy_sweep_ok := false
+    state_buy_ob_ok := false
+if htf_bullish
+    state_sell_sweep_ok := false
+    state_sell_ob_ok := false
+
+// --- BUY LOGIC ---
+if htf_bullish
+    // Step 2: Check Sweep
+    if sweep_bullish
+        state_buy_sweep_ok := true
+
+    // Step 3: Check OB Tap (Must happen after or during sweep context? Usually tap happens after sweep)
+    // Check if low touches any active bullish OB
+    is_tapping_bull_ob = false
+    if array.size(bull_obs) > 0
+        for i = 0 to array.size(bull_obs) - 1
+            b = array.get(bull_obs, i)
+            // Tap: Low <= Top and High >= Bottom (Price inside box)
+            if low <= box.get_top(b) and high >= box.get_bottom(b)
+                is_tapping_bull_ob := true
+
+    if is_tapping_bull_ob
+        state_buy_ob_ok := true
+
+    // Step 4: CHoCH (Trigger)
+    // We need all previous states to be true + CHoCH now
+    if choch_bullish and state_buy_sweep_ok and state_buy_ob_ok
+        // FIRE BUY SIGNAL
+        plotshape(bar_index, "BUY", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small)
+        alert("EXECUTION: BUY Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+        // Reset states to avoid duplicate signals for the same setup
+        state_buy_sweep_ok := false
+        state_buy_ob_ok := false
+
+
+// --- SELL LOGIC ---
+if htf_bearish
+    // Step 2: Check Sweep
+    if sweep_bearish
+        state_sell_sweep_ok := true
+
+    // Step 3: Check OB Tap
+    is_tapping_bear_ob = false
+    if array.size(bear_obs) > 0
+        for i = 0 to array.size(bear_obs) - 1
+            b = array.get(bear_obs, i)
+            if high >= box.get_bottom(b) and low <= box.get_top(b)
+                is_tapping_bear_ob := true
+
+    if is_tapping_bear_ob
+        state_sell_ob_ok := true
+
+    // Step 4: CHoCH (Trigger)
+    if choch_bearish and state_sell_sweep_ok and state_sell_ob_ok
+        // FIRE SELL SIGNAL
+        plotshape(bar_index, "SELL", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white, size=size.small)
+        alert("EXECUTION: SELL Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+        // Reset
+        state_sell_sweep_ok := false
+        state_sell_ob_ok := false

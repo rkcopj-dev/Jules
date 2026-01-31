@@ -1,7 +1,7 @@
 // @version=5
 // The user requested Pine Script v6, but as of development, the latest stable version is v5.
 // This script is written in v5, which is the current standard and supports the requested `strategy()` function.
-strategy("Ultimate Smart Trader - India", overlay=true, shorttitle="UST-I")
+strategy("RK_smc", overlay=true, shorttitle="RK_smc")
 
 // === INPUTS ===
 

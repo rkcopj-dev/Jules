@@ -200,6 +200,10 @@ if htf_bullish
     state_sell_sweep_ok := false
     state_sell_ob_ok := false
 
+// Trigger flags for signals (global scope for plotshape)
+bool fire_buy = false
+bool fire_sell = false
+
 // --- BUY LOGIC ---
 if htf_bullish
     // Step 2: Check Sweep
@@ -222,9 +226,7 @@ if htf_bullish
     // Step 4: CHoCH (Trigger)
     // We need all previous states to be true + CHoCH now
     if choch_bullish and state_buy_sweep_ok and state_buy_ob_ok
-        // FIRE BUY SIGNAL
-        plotshape(bar_index, "BUY", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small)
-        alert("EXECUTION: BUY Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+        fire_buy := true
 
         // Reset states to avoid duplicate signals for the same setup
         state_buy_sweep_ok := false
@@ -250,10 +252,18 @@ if htf_bearish
 
     // Step 4: CHoCH (Trigger)
     if choch_bearish and state_sell_sweep_ok and state_sell_ob_ok
-        // FIRE SELL SIGNAL
-        plotshape(bar_index, "SELL", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white, size=size.small)
-        alert("EXECUTION: SELL Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+        fire_sell := true
 
         // Reset
         state_sell_sweep_ok := false
         state_sell_ob_ok := false
+
+// --- VISUALS & ALERTS ---
+plotshape(fire_buy, "BUY", shape.labelup, location.belowbar, color.green, text="BUY", textcolor=color.white, size=size.small)
+plotshape(fire_sell, "SELL", shape.labeldown, location.abovebar, color.red, text="SELL", textcolor=color.white, size=size.small)
+
+if fire_buy
+    alert("EXECUTION: BUY Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)
+
+if fire_sell
+    alert("EXECUTION: SELL Signal on " + syminfo.ticker, alert.freq_once_per_bar_close)

@@ -120,8 +120,7 @@ else
     bias := "Bearish"
     bg_color := color.new(color.red, 95)
 
-if show_htf_bg
-    bgcolor(bg_color)
+bgcolor(show_htf_bg ? bg_color : na)
 
 // Display HTF Bias Label
 // var table bias_tbl = table.new(position.top_right, 1, 1)

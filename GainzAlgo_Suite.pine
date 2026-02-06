@@ -3,7 +3,7 @@ indicator("GainzAlgo Suite", overlay=true)
 
 // --- INPUTS ---
 config_input = input.string("STANDARD", "Configuration", options=["STANDARD", "PRO", "V2 ESSENTIAL", "V2 PROFICIENT", "V2 ALPHA"])
-license_key = input.string("", "License Key")
+license_key = input.string("STANDARD", "License Key")
 
 // --- CONSTANTS ---
 LOCKED_MSG = "Configuration Locked"
@@ -35,8 +35,9 @@ f_candle_structure() =>
     upper_wick = high - math.max(close, open)
     lower_wick = math.min(close, open) - low
 
-    bullish_eng = close > open and close[1] < open[1] and close > open[1] and open < close[1]
-    bearish_eng = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+    // Relaxed Engulfing: Allow equal open/close (no gap required)
+    bullish_eng = close > open and close[1] < open[1] and close >= open[1] and open <= close[1]
+    bearish_eng = close < open and close[1] > open[1] and close <= open[1] and open >= close[1]
 
     bullish_pin = lower_wick > body * 2 and upper_wick < body
     bearish_pin = upper_wick > body * 2 and lower_wick < body
@@ -48,9 +49,10 @@ f_calc_standard() =>
     // 1. Structure
     [bull_struct, bear_struct] = f_candle_structure()
 
-    // 2. Volatility (Range Validation - Body size relative to ATR)
+    // 2. Volatility (Range Validation - Total Range relative to ATR)
     atr = f_get_volatility(14)
-    valid_volatility = math.abs(close - open) > (atr * 0.3)
+    // Changed from Body > ATR*0.3 to Range > ATR*0.5 to allow Pinbars/Dojis with high volatility
+    valid_volatility = (high - low) > (atr * 0.5)
 
     // 3. Momentum
     mom = f_get_momentum(close, 14)

@@ -1,0 +1,144 @@
+//@version=5
+indicator("GainzAlgo Suite", overlay=true)
+
+config_input = input.string("STANDARD", "Configuration", options=["STANDARD", "PRO", "V2 ESSENTIAL", "V2 PROFICIENT", "V2 ALPHA"])
+license_key = input.string("", "License Key")
+
+LOCKED_MSG = "Configuration Locked"
+
+f_get_volatility(length) =>
+    ta.atr(length)
+
+f_get_momentum(src, len) =>
+    ta.ema(src - src[len], len)
+
+f_get_trend(src, len_fast, len_slow) =>
+    ta.ema(src, len_fast) > ta.ema(src, len_slow)
+
+f_candle_structure() =>
+    body = math.abs(close - open)
+    upper_wick = high - math.max(close, open)
+    lower_wick = math.min(close, open) - low
+
+    bullish_eng = close > open and close[1] < open[1] and close > open[1] and open < close[1]
+    bearish_eng = close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+    bullish_pin = lower_wick > body * 2 and upper_wick < body
+    bearish_pin = upper_wick > body * 2 and lower_wick < body
+
+    [bullish_eng or bullish_pin, bearish_eng or bearish_pin]
+
+f_calc_standard() =>
+    [bull_struct, bear_struct] = f_candle_structure()
+    atr = f_get_volatility(14)
+    valid_volatility = math.abs(close - open) > (atr * 0.3)
+    mom = f_get_momentum(close, 14)
+    bull_mom = mom > 0
+    bear_mom = mom < 0
+    bull_trend = f_get_trend(close, 20, 50)
+    bear_trend = not bull_trend
+
+    buy = bull_struct and valid_volatility and bull_mom and bull_trend
+    sell = bear_struct and valid_volatility and bear_mom and bear_trend
+    [buy, sell]
+
+f_calc_pro() =>
+    range_len = high - low
+    csmrm_score = range_len == 0 ? 5.0 : ((close - low) / range_len) * 10.0
+
+    atr = ta.atr(14)
+    atr_max = ta.highest(atr, 50)
+    atr_min = ta.lowest(atr, 50)
+    vol_denom = atr_max - atr_min
+    vol_score = vol_denom == 0 ? 5.0 : ((atr - atr_min) / vol_denom) * 10.0
+
+    ma = ta.ema(close, 20)
+    slope = ma - ma[1]
+    norm_slope = slope / (ta.atr(14) == 0 ? 1 : ta.atr(14))
+    csta_score = math.max(0.0, math.min(10.0, 5.0 + (norm_slope * 5.0)))
+
+    mom = close - close[4]
+    accel = mom - mom[1]
+    norm_accel = accel / (ta.atr(14) == 0 ? 1 : ta.atr(14))
+    samsm_score = math.max(0.0, math.min(10.0, 5.0 + (norm_accel * 5.0)))
+
+    total_score = (csmrm_score * 0.25) + (vol_score * 0.15) + (csta_score * 0.3) + (samsm_score * 0.3)
+
+    threshold_upper = ta.sma(total_score, 20) + 0.5
+    threshold_lower = ta.sma(total_score, 20) - 0.5
+
+    buy = ta.crossover(total_score, threshold_upper)
+    sell = ta.crossunder(total_score, threshold_lower)
+    [buy, sell]
+
+f_calc_v2_essential() =>
+    macro_ma = ta.sma(close, 200)
+    bullish_macro = close > macro_ma
+    bearish_macro = close < macro_ma
+
+    highest_20 = ta.highest(high, 20)
+    lowest_20 = ta.lowest(low, 20)
+
+    [diplus, diminus, adx] = ta.dmi(14, 14)
+    stable_trend = adx > 20
+
+    buy = bullish_macro and close > highest_20[1] and stable_trend
+    sell = bearish_macro and close < lowest_20[1] and stable_trend
+    [buy, sell]
+
+f_calc_v2_proficient() =>
+    vol = ta.atr(14)
+    vol_avg = ta.sma(vol, 50)
+    len_adaptive = int(math.max(10, math.min(50, 20 * (vol_avg / (vol == 0 ? 1 : vol)))))
+
+    adaptive_ma = ta.ema(close, len_adaptive)
+
+    diff = close - close[1]
+    gain = ta.ema(math.max(diff, 0), len_adaptive)
+    loss = ta.ema(math.max(-diff, 0), len_adaptive)
+    rs = loss == 0 ? 100 : gain / loss
+    rsi_adaptive = 100 - (100 / (1 + rs))
+
+    bullish_cond = close > adaptive_ma and rsi_adaptive > 50 and rsi_adaptive > rsi_adaptive[1]
+    bearish_cond = close < adaptive_ma and rsi_adaptive < 50 and rsi_adaptive < rsi_adaptive[1]
+    [bullish_cond, bearish_cond]
+
+f_calc_v2_alpha() =>
+    fast_k = ta.stoch(close, high, low, 5)
+    slow_k = ta.sma(fast_k, 3)
+
+    inst_trend = ta.linreg(close, 5, 0)
+    trend_up = inst_trend > inst_trend[1]
+
+    atr = ta.atr(5)
+    atr_ma = ta.sma(atr, 20)
+    surge = atr > atr_ma
+
+    buy = ta.crossover(fast_k, slow_k) and fast_k < 80 and trend_up and surge
+    sell = ta.crossunder(fast_k, slow_k) and fast_k > 20 and not trend_up and surge
+    [buy, sell]
+
+f_validate_license(cfg, key) =>
+    key == cfg
+
+is_locked = not f_validate_license(config_input, license_key)
+
+if is_locked and barstate.islast
+    label.new(bar_index, high, LOCKED_MSG, color=color.red, textcolor=color.white, style=label.style_label_down)
+
+[b, s] = if not is_locked
+    switch config_input
+        "STANDARD" => f_calc_standard()
+        "PRO" => f_calc_pro()
+        "V2 ESSENTIAL" => f_calc_v2_essential()
+        "V2 PROFICIENT" => f_calc_v2_proficient()
+        "V2 ALPHA" => f_calc_v2_alpha()
+        => [false, false]
+else
+    [false, false]
+
+buy_signal = b and barstate.isconfirmed
+sell_signal = s and barstate.isconfirmed
+
+plotshape(buy_signal, "Buy", shape.labelup, location.belowbar, color.green, 0, "BUY", color.white)
+plotshape(sell_signal, "Sell", shape.labeldown, location.abovebar, color.red, 0, "SELL", color.white)

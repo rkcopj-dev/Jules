@@ -63,9 +63,13 @@ f_calc_standard() =>
     bull_trend = f_get_trend(close, 20, 50)
     bear_trend = not bull_trend
 
+    // 5. Fake Signal Filter (ADX)
+    [dp, dm, adx] = ta.dmi(14, 14)
+    strong_trend = adx > 20
+
     // Combination
-    buy = bull_struct and valid_volatility and bull_mom and bull_trend
-    sell = bear_struct and valid_volatility and bear_mom and bear_trend
+    buy = bull_struct and valid_volatility and bull_mom and bull_trend and strong_trend
+    sell = bear_struct and valid_volatility and bear_mom and bear_trend and strong_trend
 
     [buy, sell]
 
@@ -128,7 +132,8 @@ f_calc_v2_essential() =>
 
     // Structural Stability (ADX for trend strength)
     [diplus, diminus, adx] = ta.dmi(14, 14)
-    stable_trend = adx > 20
+    // Stricter ADX for Essential V2 to remove chop
+    stable_trend = adx > 25
 
     // Logic
     // Buy: Macro Bullish + Breakout of recent high + Stable Trend
@@ -196,8 +201,9 @@ f_calc_intuition() =>
     // 2. Momentum Engine (RSI + Signal Line)
     rsi = ta.rsi(close, 14)
     rsi_signal = ta.ema(rsi, 9)
-    mom_bull = ta.crossover(rsi, rsi_signal) and rsi < 70 // Room to move
-    mom_bear = ta.crossunder(rsi, rsi_signal) and rsi > 30
+    // Strong Momentum Validation: RSI must be in control zone (Buy > 50, Sell < 50)
+    mom_bull = ta.crossover(rsi, rsi_signal) and rsi > 50 and rsi < 80
+    mom_bear = ta.crossunder(rsi, rsi_signal) and rsi < 50 and rsi > 20
 
     // 3. Volatility Direction (Supertrend-like logic)
     atr = ta.atr(14)
@@ -224,10 +230,20 @@ f_calc_intuition() =>
     vol_ma = ta.sma(volume, 20)
     vol_active = volume > vol_ma
 
+    // 5. Strong Trend Filter (ADX) - Removes Fake Signals in Chop
+    [dp, dm, adx] = ta.dmi(14, 14)
+    strong_trend = adx > 25
+
+    // 6. Candle Breakout Confirmation
+    // Buy: Current Close > Previous High (Confirms momentum)
+    // Sell: Current Close < Previous Low
+    breakout_bull = close > high[1]
+    breakout_bear = close < low[1]
+
     // Logic Integration
-    // Intuition: Buy when Long-Term Trend is Up + Local Volatility is Bullish + Momentum Shifts Up + Volume confirms
-    buy = trend_bull and vol_bull and mom_bull and vol_active
-    sell = trend_bear and vol_bear and mom_bear and vol_active
+    // Intuition: Strong Trend + Trend Up + Volatility Bullish + Momentum Trigger + Volume + Breakout
+    buy = trend_bull and vol_bull and mom_bull and vol_active and strong_trend and breakout_bull
+    sell = trend_bear and vol_bear and mom_bear and vol_active and strong_trend and breakout_bear
 
     [buy, sell]
 

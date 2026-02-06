@@ -191,59 +191,62 @@ f_calc_v2_alpha() =>
 
     [buy, sell]
 
-// --- INTUITION CONFIGURATION (High Accuracy) ---
+// --- INTUITION CONFIGURATION (SMC / ICT Concepts) ---
 f_calc_intuition() =>
-    // 1. High-Timeframe/Long-Term Trend Filter (200 EMA)
+    // 1. Structure Engine (Pivots)
+    // Identify Market Structure Shifts (MSS) / Break of Structure (BOS)
+    left_bars = 5
+    right_bars = 5
+    ph = ta.pivothigh(left_bars, right_bars)
+    pl = ta.pivotlow(left_bars, right_bars)
+
+    // Stateful Pivot Tracking
+    var float swing_high = na
+    var float swing_low = na
+
+    swing_high := not na(ph) ? ph : swing_high
+    swing_low := not na(pl) ? pl : swing_low
+
+    // 2. Trend Filter (Institution Bias)
+    // Trade only in the direction of the macro trend
     ema200 = ta.ema(close, 200)
-    trend_bull = close > ema200
-    trend_bear = close < ema200
+    bullish_bias = close > ema200
+    bearish_bias = close < ema200
 
-    // 2. Momentum Engine (RSI + Signal Line)
-    rsi = ta.rsi(close, 14)
-    rsi_signal = ta.ema(rsi, 9)
-    // Strong Momentum Validation: RSI must be in control zone (Buy > 50, Sell < 50)
-    mom_bull = ta.crossover(rsi, rsi_signal) and rsi > 50 and rsi < 80
-    mom_bear = ta.crossunder(rsi, rsi_signal) and rsi < 50 and rsi > 20
-
-    // 3. Volatility Direction (Supertrend-like logic)
+    // 3. Displacement (Impulse)
+    // Valid moves must be impulsive (Large Body)
     atr = ta.atr(14)
-    factor = 3.0
-    // Simplified Supertrend Logic for direction only
-    src = hlc3
-    up = src - (factor * atr)
-    dn = src + (factor * atr)
+    body = math.abs(close - open)
+    is_displacement = body > atr
 
-    // Stateful Supertrend
-    var float trend_up_level = na
-    var float trend_dn_level = na
-    var int trend = 1
+    // 4. Closing Strength (No Wick Rejection)
+    // Buy: Close in upper 30% of range. Sell: Close in lower 30%.
+    range_len = high - low
+    close_strength_bull = (close - low) > (range_len * 0.7)
+    close_strength_bear = (high - close) > (range_len * 0.7)
 
-    trend_up_level := (na(trend_up_level[1]) ? up : (close[1] > trend_up_level[1] ? math.max(up, trend_up_level[1]) : up))
-    trend_dn_level := (na(trend_dn_level[1]) ? dn : (close[1] < trend_dn_level[1] ? math.min(dn, trend_dn_level[1]) : dn))
-
-    trend := (na(trend[1]) ? 1 : (trend[1] == -1 and close > trend_dn_level[1] ? 1 : (trend[1] == 1 and close < trend_up_level[1] ? -1 : trend[1])))
-
-    vol_bull = trend == 1
-    vol_bear = trend == -1
-
-    // 4. Volume Confirmation (Activity Spike)
+    // 5. Volume Validation
     vol_ma = ta.sma(volume, 20)
     vol_active = volume > vol_ma
 
-    // 5. Strong Trend Filter (ADX) - Removes Fake Signals in Chop
-    [dp, dm, adx] = ta.dmi(14, 14)
-    strong_trend = adx > 25
+    // 6. Signal Trigger (BOS with Confluence)
+    // Only trigger if we break the Swing High/Low with Displacement & Volume
 
-    // 6. Candle Breakout Confirmation
-    // Buy: Current Close > Previous High (Confirms momentum)
-    // Sell: Current Close < Previous Low
-    breakout_bull = close > high[1]
-    breakout_bear = close < low[1]
+    // Buy Signal:
+    // - Break above Swing High
+    // - Bullish Macro Bias
+    // - Displacement Candle
+    // - Strong Close
+    // - High Volume
+    buy = ta.crossover(close, swing_high) and bullish_bias and is_displacement and close_strength_bull and vol_active
 
-    // Logic Integration
-    // Intuition: Strong Trend + Trend Up + Volatility Bullish + Momentum Trigger + Volume + Breakout
-    buy = trend_bull and vol_bull and mom_bull and vol_active and strong_trend and breakout_bull
-    sell = trend_bear and vol_bear and mom_bear and vol_active and strong_trend and breakout_bear
+    // Sell Signal:
+    // - Break below Swing Low
+    // - Bearish Macro Bias
+    // - Displacement Candle
+    // - Strong Close
+    // - High Volume
+    sell = ta.crossunder(close, swing_low) and bearish_bias and is_displacement and close_strength_bear and vol_active
 
     [buy, sell]
 

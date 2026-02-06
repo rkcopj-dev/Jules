@@ -10,6 +10,13 @@ LOCKED_MSG = "Configuration Locked"
 
 // --- SHARED HELPER FUNCTIONS ---
 
+// Custom Dynamic EMA (Solves "series int" length issue with ta.ema)
+f_dynamic_ema(src, len) =>
+    alpha = 2.0 / (len + 1.0)
+    var float ema = na
+    ema := na(ema) ? src : alpha * src + (1.0 - alpha) * nz(ema[1])
+    ema
+
 // Custom Volatility
 f_get_volatility(length) =>
     ta.atr(length)
@@ -68,7 +75,7 @@ f_calc_pro() =>
     csmrm_score = range_len == 0 ? 5.0 : ((close - low) / range_len) * 10.0
 
     // 2. Percentile-ranked Volatility - Scale 0-10
-    atr = ta.atr(14)
+    atr = ta.atr(14) // Extracted to avoid ternary consistency issue
     atr_max = ta.highest(atr, 50)
     atr_min = ta.lowest(atr, 50)
     vol_denom = atr_max - atr_min
@@ -79,14 +86,16 @@ f_calc_pro() =>
     ma = ta.ema(close, 20)
     slope = ma - ma[1]
     // Normalize: assume max reasonable slope is roughly ATR.
-    norm_slope = slope / (ta.atr(14) == 0 ? 1 : ta.atr(14))
+    // ATR is already calculated as 'atr'
+    atr_denom = atr == 0 ? 1.0 : atr
+    norm_slope = slope / atr_denom
     // Map -1 to 1 range to 0 to 10. 0 slope = 5.
     csta_score = math.max(0.0, math.min(10.0, 5.0 + (norm_slope * 5.0)))
 
     // 4. SAMSM (Momentum Acceleration Model) - Scale 0-10
     mom = close - close[4]
     accel = mom - mom[1]
-    norm_accel = accel / (ta.atr(14) == 0 ? 1 : ta.atr(14))
+    norm_accel = accel / atr_denom
     samsm_score = math.max(0.0, math.min(10.0, 5.0 + (norm_accel * 5.0)))
 
     // Weighted Sum
@@ -136,13 +145,14 @@ f_calc_v2_proficient() =>
     // Clamp length between 10 and 50.
     len_adaptive = int(math.max(10, math.min(50, 20 * (vol_avg / (vol == 0 ? 1 : vol)))))
 
-    // Mid-range responsiveness (Adaptive MA)
-    adaptive_ma = ta.ema(close, len_adaptive)
+    // Mid-range responsiveness (Adaptive MA using Custom Dynamic EMA)
+    adaptive_ma = f_dynamic_ema(close, len_adaptive)
 
     // Momentum-shift modeling (RSI with adaptive length logic)
     diff = close - close[1]
-    gain = ta.ema(math.max(diff, 0), len_adaptive)
-    loss = ta.ema(math.max(-diff, 0), len_adaptive)
+    // Use f_dynamic_ema because len_adaptive is a series int
+    gain = f_dynamic_ema(math.max(diff, 0), len_adaptive)
+    loss = f_dynamic_ema(math.max(-diff, 0), len_adaptive)
     rs = loss == 0 ? 100 : gain / loss
     rsi_adaptive = 100 - (100 / (1 + rs))
 
@@ -177,7 +187,6 @@ f_calc_v2_alpha() =>
 // --- MAIN EXECUTION ---
 f_validate_license(cfg, key) =>
     // License Key Validation
-    // For demonstration: Key must match the Configuration Name
     key == cfg
 
 is_locked = not f_validate_license(config_input, license_key)
@@ -186,14 +195,21 @@ is_locked = not f_validate_license(config_input, license_key)
 if is_locked and barstate.islast
     label.new(bar_index, high, LOCKED_MSG, color=color.red, textcolor=color.white, style=label.style_label_down)
 
-// Execute Logic
+// Calculate ALL configurations unconditionally to maintain internal history state
+[std_b, std_s] = f_calc_standard()
+[pro_b, pro_s] = f_calc_pro()
+[ess_b, ess_s] = f_calc_v2_essential()
+[prof_b, prof_s] = f_calc_v2_proficient()
+[alp_b, alp_s] = f_calc_v2_alpha()
+
+// Select the Output based on config
 [b, s] = if not is_locked
     switch config_input
-        "STANDARD" => f_calc_standard()
-        "PRO" => f_calc_pro()
-        "V2 ESSENTIAL" => f_calc_v2_essential()
-        "V2 PROFICIENT" => f_calc_v2_proficient()
-        "V2 ALPHA" => f_calc_v2_alpha()
+        "STANDARD" => [std_b, std_s]
+        "PRO" => [pro_b, pro_s]
+        "V2 ESSENTIAL" => [ess_b, ess_s]
+        "V2 PROFICIENT" => [prof_b, prof_s]
+        "V2 ALPHA" => [alp_b, alp_s]
         => [false, false]
 else
     [false, false]
@@ -202,9 +218,9 @@ else
 buy_signal = b and barstate.isconfirmed
 sell_signal = s and barstate.isconfirmed
 
-// Plotting
-plotshape(buy_signal, "Buy", shape.labelup, location.belowbar, color.green, 0, "BUY", text_color=color.white)
-plotshape(sell_signal, "Sell", shape.labeldown, location.abovebar, color.red, 0, "SELL", text_color=color.white)
+// Plotting (Reverted to textcolor)
+plotshape(buy_signal, "Buy", shape.labelup, location.belowbar, color.green, 0, "BUY", textcolor=color.white)
+plotshape(sell_signal, "Sell", shape.labeldown, location.abovebar, color.red, 0, "SELL", textcolor=color.white)
 
-// Explicit output to satisfy 'at least one output' check if plotshape is conditional
+// Explicit output
 plot(close, display = display.none)

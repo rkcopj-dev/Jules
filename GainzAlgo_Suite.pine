@@ -191,62 +191,56 @@ f_calc_v2_alpha() =>
 
     [buy, sell]
 
-// --- INTUITION CONFIGURATION (SMC / ICT Concepts) ---
+// --- INTUITION CONFIGURATION (SMC / ICT "Golden Setup") ---
 f_calc_intuition() =>
-    // 1. Structure Engine (Pivots)
-    // Identify Market Structure Shifts (MSS) / Break of Structure (BOS)
-    left_bars = 5
-    right_bars = 5
+    // 1. Structure Engine (Pivots 3/3 for Fast Reaction)
+    left_bars = 3
+    right_bars = 3
     ph = ta.pivothigh(left_bars, right_bars)
     pl = ta.pivotlow(left_bars, right_bars)
 
-    // Stateful Pivot Tracking
+    // Stateful Swing Points
     var float swing_high = na
     var float swing_low = na
-
     swing_high := not na(ph) ? ph : swing_high
     swing_low := not na(pl) ? pl : swing_low
 
     // 2. Trend Filter (Institution Bias)
-    // Trade only in the direction of the macro trend
     ema200 = ta.ema(close, 200)
     bullish_bias = close > ema200
     bearish_bias = close < ema200
 
-    // 3. Displacement (Impulse)
-    // Valid moves must be impulsive (Large Body)
-    atr = ta.atr(14)
-    body = math.abs(close - open)
-    is_displacement = body > atr
+    // 3. Fair Value Gap (FVG) Detection
+    // Bullish FVG: Low of current > High of 2 bars ago
+    // Bearish FVG: High of current < Low of 2 bars ago
+    // We check if an FVG was created *in the recent move* (current or previous bar)
+    fvg_bull_created = low > high[2]
+    fvg_bear_created = high < low[2]
 
-    // 4. Closing Strength (No Wick Rejection)
-    // Buy: Close in upper 30% of range. Sell: Close in lower 30%.
-    range_len = high - low
-    close_strength_bull = (close - low) > (range_len * 0.7)
-    close_strength_bear = (high - close) > (range_len * 0.7)
+    // 4. Momentum Validation
+    rsi = ta.rsi(close, 14)
+    mom_bull = rsi > 50
+    mom_bear = rsi < 50
 
     // 5. Volume Validation
     vol_ma = ta.sma(volume, 20)
     vol_active = volume > vol_ma
 
-    // 6. Signal Trigger (BOS with Confluence)
-    // Only trigger if we break the Swing High/Low with Displacement & Volume
+    // 6. Signal Trigger: Break of Structure (BOS) + FVG Creation
 
-    // Buy Signal:
-    // - Break above Swing High
-    // - Bullish Macro Bias
-    // - Displacement Candle
-    // - Strong Close
-    // - High Volume
-    buy = ta.crossover(close, swing_high) and bullish_bias and is_displacement and close_strength_bull and vol_active
+    // Buy:
+    // - Breakout above Swing High
+    // - Bullish Trend
+    // - FVG Created (Validating the impulse)
+    // - Strong Momentum
+    buy = ta.crossover(close, swing_high) and bullish_bias and fvg_bull_created and mom_bull and vol_active
 
-    // Sell Signal:
-    // - Break below Swing Low
-    // - Bearish Macro Bias
-    // - Displacement Candle
-    // - Strong Close
-    // - High Volume
-    sell = ta.crossunder(close, swing_low) and bearish_bias and is_displacement and close_strength_bear and vol_active
+    // Sell:
+    // - Breakout below Swing Low
+    // - Bearish Trend
+    // - FVG Created
+    // - Weak Momentum
+    sell = ta.crossunder(close, swing_low) and bearish_bias and fvg_bear_created and mom_bear and vol_active
 
     [buy, sell]
 

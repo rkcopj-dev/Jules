@@ -2,7 +2,7 @@
 indicator("GainzAlgo Suite", overlay=true)
 
 // --- INPUTS ---
-config_input = input.string("STANDARD", "Configuration", options=["STANDARD", "PRO", "V2 ESSENTIAL", "V2 PROFICIENT", "V2 ALPHA"])
+config_input = input.string("STANDARD", "Configuration", options=["STANDARD", "PRO", "V2 ESSENTIAL", "V2 PROFICIENT", "V2 ALPHA", "INTUITION"])
 license_key = input.string("STANDARD", "License Key")
 
 // --- CONSTANTS ---
@@ -186,6 +186,52 @@ f_calc_v2_alpha() =>
 
     [buy, sell]
 
+// --- INTUITION CONFIGURATION (High Accuracy) ---
+f_calc_intuition() =>
+    // 1. High-Timeframe/Long-Term Trend Filter (200 EMA)
+    ema200 = ta.ema(close, 200)
+    trend_bull = close > ema200
+    trend_bear = close < ema200
+
+    // 2. Momentum Engine (RSI + Signal Line)
+    rsi = ta.rsi(close, 14)
+    rsi_signal = ta.ema(rsi, 9)
+    mom_bull = ta.crossover(rsi, rsi_signal) and rsi < 70 // Room to move
+    mom_bear = ta.crossunder(rsi, rsi_signal) and rsi > 30
+
+    // 3. Volatility Direction (Supertrend-like logic)
+    atr = ta.atr(14)
+    factor = 3.0
+    // Simplified Supertrend Logic for direction only
+    src = hlc3
+    up = src - (factor * atr)
+    dn = src + (factor * atr)
+
+    // Stateful Supertrend
+    var float trend_up_level = na
+    var float trend_dn_level = na
+    var int trend = 1
+
+    trend_up_level := (na(trend_up_level[1]) ? up : (close[1] > trend_up_level[1] ? math.max(up, trend_up_level[1]) : up))
+    trend_dn_level := (na(trend_dn_level[1]) ? dn : (close[1] < trend_dn_level[1] ? math.min(dn, trend_dn_level[1]) : dn))
+
+    trend := (na(trend[1]) ? 1 : (trend[1] == -1 and close > trend_dn_level[1] ? 1 : (trend[1] == 1 and close < trend_up_level[1] ? -1 : trend[1])))
+
+    vol_bull = trend == 1
+    vol_bear = trend == -1
+
+    // 4. Volume Confirmation (Activity Spike)
+    vol_ma = ta.sma(volume, 20)
+    vol_active = volume > vol_ma
+
+    // Logic Integration
+    // Intuition: Buy when Long-Term Trend is Up + Local Volatility is Bullish + Momentum Shifts Up + Volume confirms
+    buy = trend_bull and vol_bull and mom_bull and vol_active
+    sell = trend_bear and vol_bear and mom_bear and vol_active
+
+    [buy, sell]
+
+
 // --- MAIN EXECUTION ---
 f_validate_license(cfg, key) =>
     // License Key Validation
@@ -203,6 +249,7 @@ if is_locked and barstate.islast
 [ess_b, ess_s] = f_calc_v2_essential()
 [prof_b, prof_s] = f_calc_v2_proficient()
 [alp_b, alp_s] = f_calc_v2_alpha()
+[intuition_b, intuition_s] = f_calc_intuition()
 
 // Select the Output based on config
 [b, s] = if not is_locked
@@ -212,6 +259,7 @@ if is_locked and barstate.islast
         "V2 ESSENTIAL" => [ess_b, ess_s]
         "V2 PROFICIENT" => [prof_b, prof_s]
         "V2 ALPHA" => [alp_b, alp_s]
+        "INTUITION" => [intuition_b, intuition_s]
         => [false, false]
 else
     [false, false]

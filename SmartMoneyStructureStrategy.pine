@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 // © GainzAlgo
 
 strategy("Smart Money Structure Strategy | GainzAlgo", overlay=true)

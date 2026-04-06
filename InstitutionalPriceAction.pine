@@ -1,0 +1,178 @@
+//@version=5
+indicator("Institutional Price Action", shorttitle="IPA", overlay=true, max_lines_count=50, max_labels_count=50)
+
+// ==============================================================================
+// 1. Inputs
+// ==============================================================================
+
+grp_nr = "Accumulation & Compression"
+nr4_lookback = input.int(4, "NR4 Lookback", group=grp_nr)
+nr7_lookback = input.int(7, "NR7 Lookback", group=grp_nr)
+nr9_lookback = input.int(9, "NR9 Lookback", group=grp_nr)
+compress_len = input.int(3, "Continuous Compression Series Length", group=grp_nr, tooltip="Number of consecutive NR candles to trigger background color")
+
+grp_mc = "Mother Candle Setup"
+mc_inside_bars = input.int(3, "Inside Bars Count", group=grp_mc, tooltip="Number of small candles engulfed by the Mother Candle")
+mc_atr_len = input.int(14, "Mother Candle ATR Length", group=grp_mc)
+mc_atr_mult = input.float(1.0, "Mother Candle ATR Multiplier", group=grp_mc, tooltip="Mother candle must be larger than this ATR multiplier to be considered directional")
+
+grp_vol = "Volume Profile & Whale Activity"
+vol_ma_len = input.int(20, "Volume MA Length", group=grp_vol)
+vol_mult = input.float(1.5, "Volume Multiplier", group=grp_vol, tooltip="Volume must be greater than Volume MA * Multiplier")
+
+grp_sd = "Seller & Buyer Zones (Supply & Demand)"
+pivot_len_left = input.int(10, "Pivot Left Lookback", group=grp_sd)
+pivot_len_right = input.int(10, "Pivot Right Lookback", group=grp_sd)
+
+grp_mtf = "MTF Trend Filter"
+mtf_res = input.timeframe("60", "Higher Timeframe", group=grp_mtf)
+mtf_ema_len = input.int(50, "MTF EMA Length", group=grp_mtf)
+
+// Colors cache
+var color COMPRESS_BG_COLOR = color.new(color.gray, 80)
+
+// ==============================================================================
+// 2. Accumulation & Compression (NR4, NR7, NR9)
+// ==============================================================================
+
+tr = high - low
+
+is_nr4 = tr <= ta.lowest(tr, nr4_lookback)
+is_nr7 = tr <= ta.lowest(tr, nr7_lookback)
+is_nr9 = tr <= ta.lowest(tr, nr9_lookback)
+
+is_nr = is_nr4 or is_nr7 or is_nr9
+
+var int nr_count = 0
+if is_nr
+    nr_count += 1
+else
+    nr_count := 0
+
+is_compression = nr_count >= compress_len
+
+// Highlight accumulation zone
+bgcolor(is_compression ? COMPRESS_BG_COLOR : na, title="Accumulation Zone")
+
+// Track Compression Zone for breakouts
+var float active_comp_high = na
+var float active_comp_low = na
+var bool in_active_comp = false
+
+comp_highest = ta.highest(high, compress_len)
+comp_lowest = ta.lowest(low, compress_len)
+
+if is_compression
+    active_comp_high := comp_highest
+    active_comp_low := comp_lowest
+    in_active_comp := true
+
+comp_breakout_up = false
+comp_breakout_down = false
+
+if in_active_comp and not is_compression
+    if close > active_comp_high
+        comp_breakout_up := true
+        in_active_comp := false
+    else if close < active_comp_low
+        comp_breakout_down := true
+        in_active_comp := false
+
+// ==============================================================================
+// 3. Mother Candle / Inside Bar Setup
+// ==============================================================================
+
+is_mc_setup = true
+for i = 0 to mc_inside_bars - 1
+    if high[i] >= high[mc_inside_bars] or low[i] <= low[mc_inside_bars]
+        is_mc_setup := false
+
+// Ensure ta.atr() is called in the global scope
+atr_val = ta.atr(mc_atr_len)
+mc_atr = atr_val[mc_inside_bars] * mc_atr_mult
+mc_range = high[mc_inside_bars] - low[mc_inside_bars]
+is_large_candle = mc_range > mc_atr
+
+is_mc_setup := is_mc_setup and is_large_candle
+
+var int last_mc_index = na
+var float active_mc_high = na
+var float active_mc_low = na
+var bool in_active_mc = false
+is_new_mc_setup = false
+
+if is_mc_setup
+    if na(last_mc_index) or (bar_index - mc_inside_bars != last_mc_index)
+        last_mc_index := bar_index - mc_inside_bars
+        active_mc_high := high[mc_inside_bars]
+        active_mc_low := low[mc_inside_bars]
+        in_active_mc := true
+        is_new_mc_setup := true
+
+plotshape(is_new_mc_setup, title="Mother Candle Setup", style=shape.circle, location=location.abovebar, color=color.blue, size=size.small, text="MC")
+
+mc_breakout_up = false
+mc_breakout_down = false
+
+if in_active_mc
+    if close > active_mc_high
+        mc_breakout_up := true
+        in_active_mc := false
+    else if close < active_mc_low
+        mc_breakout_down := true
+        in_active_mc := false
+
+// ==============================================================================
+// 4. Volume Profile & Whale Activity
+// ==============================================================================
+
+vol_ma = ta.sma(volume, vol_ma_len)
+is_whale_vol = volume > (vol_ma * vol_mult)
+
+// ==============================================================================
+// 5. Multi-Timeframe (MTF) Trend Filter
+// ==============================================================================
+
+// Use lookahead=barmerge.lookahead_on to access historical completed bars of HTF and avoid repainting
+mtf_ema = request.security(syminfo.tickerid, mtf_res, ta.ema(close, mtf_ema_len)[1], lookahead = barmerge.lookahead_on)
+
+is_mtf_bullish = close > mtf_ema
+is_mtf_bearish = close < mtf_ema
+
+strong_buy = (comp_breakout_up or mc_breakout_up) and is_whale_vol and is_mtf_bullish
+strong_sell = (comp_breakout_down or mc_breakout_down) and is_whale_vol and is_mtf_bearish
+
+plotshape(strong_buy, title="Strong Buy Signal", style=shape.labelup, location=location.belowbar, color=color.green, text="STRONG BUY", textcolor=color.white, size=size.small)
+plotshape(strong_sell, title="Strong Sell Signal", style=shape.labeldown, location=location.abovebar, color=color.red, text="STRONG SELL", textcolor=color.white, size=size.small)
+
+// Alerts
+alertcondition(strong_buy, title="Strong Buy Alert", message="Strong Buy Signal: Whale Activity + Breakout + MTF Bullish")
+alertcondition(strong_sell, title="Strong Sell Alert", message="Strong Sell Signal: Whale Activity + Breakout + MTF Bearish")
+
+// ==============================================================================
+// 6. Seller Zones & Buyer Zones (Supply & Demand)
+// ==============================================================================
+
+var line last_res_line = na
+var line last_sup_line = na
+var label last_res_label = na
+var label last_sup_label = na
+
+ph = ta.pivothigh(high, pivot_len_left, pivot_len_right)
+pl = ta.pivotlow(low, pivot_len_left, pivot_len_right)
+
+if not na(ph)
+    last_res_line := line.new(bar_index - pivot_len_right, ph, bar_index, ph, color=color.red, width=2)
+    last_res_label := label.new(bar_index - pivot_len_right, ph, text="Seller Zone", textcolor=color.red, style=label.style_none, size=size.small)
+
+if not na(pl)
+    last_sup_line := line.new(bar_index - pivot_len_right, pl, bar_index, pl, color=color.green, width=2)
+    last_sup_label := label.new(bar_index - pivot_len_right, pl, text="Buyer Zone", textcolor=color.green, style=label.style_none, size=size.small)
+
+// Update line x2 so it extends to current bar
+if not na(last_res_line)
+    line.set_x2(last_res_line, bar_index)
+if not na(last_sup_line)
+    line.set_x2(last_sup_line, bar_index)
+
+// EOF

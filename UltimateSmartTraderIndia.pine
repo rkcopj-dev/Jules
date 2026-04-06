@@ -1,6 +1,6 @@
-// @version=5
+// @version=6
 // The user requested Pine Script v6, but as of development, the latest stable version is v5.
-// This script is written in v5, which is the current standard and supports the requested `strategy()` function.
+// This script is written in v6, which is the current standard and supports the requested `strategy()` function.
 strategy("Ultimate Smart Trader - India", overlay=true, shorttitle="UST-I")
 
 // === INPUTS ===
@@ -10,9 +10,9 @@ group_ema = "EMA Settings"
 ema9_len = input.int(9, "EMA 1 (Fast) Length", group = group_ema, tooltip = "Length for the fastest EMA, used for crossover signals.")
 ema21_len = input.int(21, "EMA 2 (Medium) Length", group = group_ema, tooltip = "Length for the medium EMA, used for crossover signals.")
 ema50_len = input.int(50, "EMA 3 (Slow) Length", group = group_ema, tooltip = "Length for the slowest EMA, used for trend context.")
-ema9_color = input.color(color.new(color.blue, 0), "EMA 1 Color", group = group_ema)
-ema21_color = input.color(color.new(color.yellow, 0), "EMA 2 Color", group = group_ema)
-ema50_color = input.color(color.new(color.red, 0), "EMA 3 Color", group = group_ema)
+ema9_color = input.color(color.blue, "EMA 1 Color", group = group_ema)
+ema21_color = input.color(color.yellow, "EMA 2 Color", group = group_ema)
+ema50_color = input.color(color.red, "EMA 3 Color", group = group_ema)
 
 // -- RSI Settings --
 group_rsi = "RSI Settings"
@@ -122,7 +122,7 @@ var box bearish_fvg_box = na
 if is_bullish_fvg and show_fvg and na(bullish_fvg_box) and na(bearish_fvg_box)
     // A new bullish FVG is found, and no other FVG is currently being tracked.
     bullish_fvg_box := box.new(bar_index - 2, bullish_fvg_top, bar_index, bullish_fvg_bottom,
-         border_color=na(), bgcolor=color.new(color.green, 85), extend=extend.right)
+         border_color=na, bgcolor=color.new(color.green, 85), extend=extend.right)
 
 // Check if the bullish FVG has been filled (price traded into it).
 if not na(bullish_fvg_box)
@@ -135,7 +135,7 @@ if not na(bullish_fvg_box)
 if is_bearish_fvg and show_fvg and na(bearish_fvg_box) and na(bullish_fvg_box)
     // A new bearish FVG is found, and no other FVG is currently being tracked.
     bearish_fvg_box := box.new(bar_index - 2, bearish_fvg_top, bar_index, bearish_fvg_bottom,
-         border_color=na(), bgcolor=color.new(color.red, 85), extend=extend.right)
+         border_color=na, bgcolor=color.new(color.red, 85), extend=extend.right)
 
 // Check if the bearish FVG has been filled.
 if not na(bearish_fvg_box)
@@ -163,16 +163,20 @@ is_bullish_mss = not na(mss_watch_high) and close > mss_watch_high and high[1] <
 // A bearish MSS occurs when the price closes below the watched low.
 is_bearish_mss = not na(mss_watch_low) and close < mss_watch_low and low[1] > mss_watch_low
 
+plot_bullish_mss = show_mss and is_bullish_mss
+plot_bearish_mss = show_mss and is_bearish_mss
+
+plotshape(plot_bullish_mss ? high : na, title='Bullish MSS', text='MSS', style=shape.triangleup, location=location.belowbar, color=color.green, size=size.tiny, textcolor=color.green)
+plotshape(plot_bearish_mss ? low : na, title='Bearish MSS', text='MSS', style=shape.triangledown, location=location.abovebar, color=color.red, size=size.tiny, textcolor=color.red)
+
 if show_mss
     if is_bullish_mss
-        plotshape(high, title='Bullish MSS', text='MSS', style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny, textcolor=color.green)
         // Invalidate the watched high so we don't trigger again until a new pivot forms.
         mss_watch_high := na
         // Also invalidate the opposing pivot, as the structure has shifted.
         mss_watch_low := na
 
     if is_bearish_mss
-        plotshape(low, title='Bearish MSS', text='MSS', style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, textcolor=color.red)
         // Invalidate the watched low.
         mss_watch_low := na
         mss_watch_high := na

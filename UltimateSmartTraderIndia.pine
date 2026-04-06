@@ -278,16 +278,15 @@ is_fib_level_bearish = false
 if not na(swing_high_price_fib) and not na(swing_low_price_fib)
     swing_range = swing_high_price_fib - swing_low_price_fib
     if swing_range > 0
+        tolerance = swing_range * 0.05
         if swing_high_bar_fib > swing_low_bar_fib // Downward retracement for a long
             fib_618 = swing_high_price_fib - (swing_range * 0.618)
             fib_786 = swing_high_price_fib - (swing_range * 0.786)
-            tolerance = swing_range * 0.05
             if math.abs(low - fib_618) < tolerance or math.abs(low - fib_786) < tolerance
                 is_fib_level_bullish := true
         if swing_low_bar_fib > swing_high_bar_fib // Upward retracement for a short
             fib_618 = swing_low_price_fib + (swing_range * 0.618)
             fib_786 = swing_low_price_fib + (swing_range * 0.786)
-            tolerance = swing_range * 0.05
             if math.abs(high - fib_618) < tolerance or math.abs(high - fib_786) < tolerance
                 is_fib_level_bearish := true
 

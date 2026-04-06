@@ -11,11 +11,16 @@ indicator("Advanced Institutional Action & Compression [MTF]", overlay=true, max
 grp_nr = "Accumulation & Compression"
 show_nr = input.bool(true, "Show NR4/NR7/NR9", group=grp_nr)
 color_nr_bg = input.color(color.new(color.gray, 80), "Compression Zone Background", group=grp_nr)
+nr4_len = input.int(3, "NR4 Lookback", minval=1, group=grp_nr)
+nr7_len = input.int(6, "NR7 Lookback", minval=1, group=grp_nr)
+nr9_len = input.int(8, "NR9 Lookback", minval=1, group=grp_nr)
 
 // Mother Candle Setup
 grp_mc = "Mother Candle Setup"
 show_mc = input.bool(true, "Show Mother Candle", group=grp_mc)
 mc_inside_bars = input.int(3, "Required Inside Bars", minval=1, group=grp_mc)
+mc_atr_len = input.int(14, "ATR Length for MC", minval=1, group=grp_mc)
+mc_atr_mult = input.float(1.5, "MC Range ATR Multiplier", minval=0.1, step=0.1, group=grp_mc)
 
 // Volume & Whale Activity
 grp_vol = "Volume Profile & Whale Activity"
@@ -39,8 +44,9 @@ mtf_ema_len = input.int(50, "MTF EMA Length", minval=1, group=grp_mtf)
 // ==============================================================================
 // Compute EMA in global scope
 ema_base = ta.ema(close, mtf_ema_len)
-// Get MTF values using tuple
-[mtf_ema_close, mtf_close] = request.security(syminfo.tickerid, mtf_tf, [ema_base, close])
+// Get MTF values using tuple via a function wrapper to avoid array type mismatches
+f_get_mtf() => [ema_base, close]
+[mtf_ema_close, mtf_close] = request.security(syminfo.tickerid, mtf_tf, f_get_mtf())
 
 // MTF Trend: True if MTF Close > MTF EMA
 is_mtf_bullish = use_mtf ? (mtf_close > mtf_ema_close) : true
@@ -51,18 +57,18 @@ is_mtf_bearish = use_mtf ? (mtf_close < mtf_ema_close) : true
 // ==============================================================================
 // A narrow range candle is one where the high - low is less than the high - low of the previous N-1 candles.
 range_cur = high - low
-range_min4 = ta.lowest(range_cur[1], 3)
-range_min7 = ta.lowest(range_cur[1], 6)
-range_min9 = ta.lowest(range_cur[1], 8)
+range_min4 = ta.lowest(range_cur[1], nr4_len)
+range_min7 = ta.lowest(range_cur[1], nr7_len)
+range_min9 = ta.lowest(range_cur[1], nr9_len)
 
-is_nr4 = range_cur < range_min4 and bar_index >= 3
-is_nr7 = range_cur < range_min7 and bar_index >= 6
-is_nr9 = range_cur < range_min9 and bar_index >= 8
+is_nr4 = range_cur < range_min4 and bar_index >= nr4_len
+is_nr7 = range_cur < range_min7 and bar_index >= nr7_len
+is_nr9 = range_cur < range_min9 and bar_index >= nr9_len
 
-// Plot NR shapes
-plotshape(show_nr and is_nr4 and not is_nr7 and not is_nr9, title="NR4", text="NR4", style=shape.triangledown, location=location.abovebar, color=color.blue, textcolor=color.blue, size=size.tiny)
-plotshape(show_nr and is_nr7 and not is_nr9, title="NR7", text="NR7", style=shape.triangledown, location=location.abovebar, color=color.purple, textcolor=color.purple, size=size.tiny)
-plotshape(show_nr and is_nr9, title="NR9", text="NR9", style=shape.triangledown, location=location.abovebar, color=color.orange, textcolor=color.orange, size=size.tiny)
+// Plot NR shapes (text removed to reduce clutter as per user screenshot feedback)
+plotshape(show_nr and is_nr4 and not is_nr7 and not is_nr9, title="NR4", style=shape.triangledown, location=location.abovebar, color=color.blue, size=size.tiny)
+plotshape(show_nr and is_nr7 and not is_nr9, title="NR7", style=shape.triangledown, location=location.abovebar, color=color.purple, size=size.tiny)
+plotshape(show_nr and is_nr9, title="NR9", style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.tiny)
 
 // Compression Zone Background
 is_compression = is_nr4 or is_nr7 or is_nr9
@@ -71,17 +77,20 @@ bgcolor(is_compression ? color_nr_bg : na, title="Compression Zone")
 // ==============================================================================
 // Component 2: Mother Candle Setup
 // ==============================================================================
-// A Mother Candle is defined as a candle whose high is > highest high of the next N inside bars
-// and low is < lowest low of the next N inside bars. Since we can't look into the future,
-// we detect this setup N bars after the Mother Candle.
+// A Mother Candle is defined as a large directional candle whose high is > highest high of the next N inside bars
+// and low is < lowest low of the next N inside bars.
+// Large directional candle = range > ATR * Multiplier
+atr_val = ta.atr(mc_atr_len)
 mc_high = high[mc_inside_bars]
 mc_low = low[mc_inside_bars]
-is_mother_candle = true
+mc_range = mc_high - mc_low
+is_mother_candle = mc_range > (atr_val[mc_inside_bars] * mc_atr_mult)
 
 if bar_index >= mc_inside_bars
-    for i = 0 to mc_inside_bars - 1
-        if high[i] >= mc_high or low[i] <= mc_low
-            is_mother_candle := false
+    if is_mother_candle // Only run loop if it passed the ATR test
+        for i = 0 to mc_inside_bars - 1
+            if high[i] >= mc_high or low[i] <= mc_low
+                is_mother_candle := false
 else
     is_mother_candle := false
 
@@ -147,7 +156,9 @@ if show_sd and not na(ph)
     if not na(last_res_label)
         label.delete(last_res_label)
     last_res_line := line.new(bar_index[pivot_len_right], ph, bar_index, ph, color=color.red, style=line.style_solid, width=2, extend=extend.right)
-    last_res_label := label.new(bar_index[pivot_len_right], ph, "Seller Zone", color=na, textcolor=color.red, style=label.style_none, size=size.small)
+    last_res_label := label.new(bar_index, ph, "Seller Zone", color=na, textcolor=color.red, style=label.style_none, size=size.small)
+else if show_sd and not na(last_res_label)
+    label.set_x(last_res_label, bar_index)
 
 var line last_sup_line = na
 var label last_sup_label = na
@@ -158,4 +169,6 @@ if show_sd and not na(pl)
     if not na(last_sup_label)
         label.delete(last_sup_label)
     last_sup_line := line.new(bar_index[pivot_len_right], pl, bar_index, pl, color=color.green, style=line.style_solid, width=2, extend=extend.right)
-    last_sup_label := label.new(bar_index[pivot_len_right], pl, "Buyer Zone", color=na, textcolor=color.green, style=label.style_none, size=size.small)
+    last_sup_label := label.new(bar_index, pl, "Buyer Zone", color=na, textcolor=color.green, style=label.style_none, size=size.small)
+else if show_sd and not na(last_sup_label)
+    label.set_x(last_sup_label, bar_index)

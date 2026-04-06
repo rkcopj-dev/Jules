@@ -1,0 +1,129 @@
+//@version=6
+indicator("Advanced Institutional Action", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// --- Inputs ---
+grp_mtf = "MTF Trend Filter"
+mtf_res = input.timeframe("60", title="Higher Timeframe", group=grp_mtf)
+ema_len = input.int(50, title="MTF EMA Length", group=grp_mtf)
+
+grp_vol = "Volume Profile & Whale Activity"
+vol_mult = input.float(2.0, title="Volume Multiplier", step=0.1, group=grp_vol)
+vol_len = input.int(20, title="Volume SMA Length", group=grp_vol)
+
+grp_nr = "Accumulation & Compression"
+show_nr_bg = input.bool(true, title="Show Compression Background", group=grp_nr)
+nr4_len = input.int(3, title="NR4 Lookback (days before)", group=grp_nr)
+nr7_len = input.int(6, title="NR7 Lookback (days before)", group=grp_nr)
+nr9_len = input.int(8, title="NR9 Lookback (days before)", group=grp_nr)
+
+grp_mc = "Mother Candle Setup"
+mc_lookforward = input.int(3, title="Inside Bars Count for Mother Candle", minval=1, group=grp_mc)
+
+grp_zones = "Supply & Demand Zones"
+swing_len = input.int(10, title="Swing Length", group=grp_zones)
+max_zones = input.int(5, title="Max Zones to Keep", group=grp_zones)
+
+// --- MTF Trend Filter ---
+// Fetch MTF EMA and close to determine trend using tuple for optimization
+[mtf_ema, mtf_close] = request.security(syminfo.tickerid, mtf_res, [ta.ema(close, ema_len), close])
+is_mtf_bullish = mtf_close > mtf_ema
+is_mtf_bearish = mtf_close < mtf_ema
+
+// --- Accumulation & Compression (NR4, NR7, NR9) ---
+// NR4: current range is smallest of last 4 days (current included)
+float range_ = high - low
+bool is_nr4 = range_ < ta.lowest(range_, nr4_len)[1]
+bool is_nr7 = range_ < ta.lowest(range_, nr7_len)[1]
+bool is_nr9 = range_ < ta.lowest(range_, nr9_len)[1]
+
+// A simple compression zone can be defined if there's an NR4/NR7/NR9
+bool is_compression = is_nr4 or is_nr7 or is_nr9
+var color color_bg_comp = color.new(color.gray, 80)
+bgcolor(show_nr_bg and is_compression ? color_bg_comp : na, title="Compression Zone")
+
+// --- Mother Candle / Inside Bar Setup ---
+// Mother candle engulfs the high and low of the next N candles.
+// Since we only know after N candles, we check if the candle N periods ago was a Mother Candle
+// relative to the last N candles.
+bool is_mother_candle_setup = false
+if bar_index > mc_lookforward
+    bool is_engulfing = true
+    float mc_high = high[mc_lookforward]
+    float mc_low = low[mc_lookforward]
+    for i = 0 to mc_lookforward - 1
+        if not (high[i] <= mc_high and low[i] >= mc_low)
+            is_engulfing := false
+            break
+    if is_engulfing
+        is_mother_candle_setup := true
+
+// Plot visual marker for Mother Candle setup
+plotshape(is_mother_candle_setup, title="Mother Candle", style=shape.circle, location=location.abovebar, color=color.blue, size=size.tiny)
+
+// Keep track of the active Mother Candle high/low for breakout detection
+var float active_mc_high = na
+var float active_mc_low = na
+if is_mother_candle_setup
+    active_mc_high := high[mc_lookforward]
+    active_mc_low := low[mc_lookforward]
+
+// --- Volume Profile & Whale Activity ---
+float vol_sma = ta.sma(volume, vol_len)
+bool is_whale_vol = volume > (vol_sma * vol_mult)
+
+// Breakout logic
+// A breakout from a compression zone (we check if yesterday was compression, or recent compression)
+// Let's define breakout as today closing outside yesterday's range if yesterday was compression
+bool is_breakout_up_comp = is_compression[1] and close > high[1]
+bool is_breakout_dn_comp = is_compression[1] and close < low[1]
+
+// A breakout from a mother candle (close above active MC high, or below active MC low)
+bool is_breakout_up_mc = not na(active_mc_high) and close > active_mc_high and close[1] <= active_mc_high
+bool is_breakout_dn_mc = not na(active_mc_low) and close < active_mc_low and close[1] >= active_mc_low
+
+// Signal conditions
+bool strong_buy = false
+bool strong_sell = false
+
+if is_whale_vol and (is_breakout_up_comp or is_breakout_up_mc) and is_mtf_bullish
+    strong_buy := true
+
+if is_whale_vol and (is_breakout_dn_comp or is_breakout_dn_mc) and is_mtf_bearish
+    strong_sell := true
+
+// Reset active Mother Candle after breakout
+if strong_buy or strong_sell or (not na(active_mc_high) and close > active_mc_high) or (not na(active_mc_low) and close < active_mc_low)
+    active_mc_high := na
+    active_mc_low := na
+
+// Plot Buy/Sell signals
+plotshape(strong_buy, title="Strong Buy", style=shape.labelup, location=location.belowbar, color=color.green, text="STRONG\nBUY", textcolor=color.white, size=size.small)
+plotshape(strong_sell, title="Strong Sell", style=shape.labeldown, location=location.abovebar, color=color.red, text="STRONG\nSELL", textcolor=color.white, size=size.small)
+
+// --- Seller Zones & Buyer Zones (Supply & Demand) ---
+float ph = ta.pivothigh(high, swing_len, swing_len)
+float pl = ta.pivotlow(low, swing_len, swing_len)
+
+var seller_lines = array.new_line()
+var seller_labels = array.new_label()
+
+var buyer_lines = array.new_line()
+var buyer_labels = array.new_label()
+
+if not na(ph)
+    l = line.new(bar_index[swing_len], ph, bar_index, ph, color=color.red, width=2, extend=extend.right)
+    lb = label.new(bar_index[swing_len], ph, text="Seller Zone", style=label.style_none, textcolor=color.red, size=size.small)
+    array.push(seller_lines, l)
+    array.push(seller_labels, lb)
+    if array.size(seller_lines) > max_zones
+        line.delete(array.shift(seller_lines))
+        label.delete(array.shift(seller_labels))
+
+if not na(pl)
+    l = line.new(bar_index[swing_len], pl, bar_index, pl, color=color.green, width=2, extend=extend.right)
+    lb = label.new(bar_index[swing_len], pl, text="Buyer Zone", style=label.style_none, textcolor=color.green, size=size.small)
+    array.push(buyer_lines, l)
+    array.push(buyer_labels, lb)
+    if array.size(buyer_lines) > max_zones
+        line.delete(array.shift(buyer_lines))
+        label.delete(array.shift(buyer_labels))

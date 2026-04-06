@@ -1,0 +1,161 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+
+//@version=6
+indicator("Advanced Institutional Action & Compression [MTF]", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ==============================================================================
+// Inputs
+// ==============================================================================
+
+// Accumulation & Compression (NR4, NR7, NR9)
+grp_nr = "Accumulation & Compression"
+show_nr = input.bool(true, "Show NR4/NR7/NR9", group=grp_nr)
+color_nr_bg = input.color(color.new(color.gray, 80), "Compression Zone Background", group=grp_nr)
+
+// Mother Candle Setup
+grp_mc = "Mother Candle Setup"
+show_mc = input.bool(true, "Show Mother Candle", group=grp_mc)
+mc_inside_bars = input.int(3, "Required Inside Bars", minval=1, group=grp_mc)
+
+// Volume & Whale Activity
+grp_vol = "Volume Profile & Whale Activity"
+vol_ma_len = input.int(20, "Volume MA Length", minval=1, group=grp_vol)
+vol_mult = input.float(2.0, "Whale Volume Multiplier", minval=1.0, step=0.1, group=grp_vol)
+
+// Supply & Demand Zones
+grp_sd = "Supply & Demand Zones"
+show_sd = input.bool(true, "Show Zones", group=grp_sd)
+pivot_len_left = input.int(10, "Pivot Left Lookback", minval=1, group=grp_sd)
+pivot_len_right = input.int(10, "Pivot Right Lookback", minval=1, group=grp_sd)
+
+// MTF Trend Filter
+grp_mtf = "MTF Trend Filter"
+use_mtf = input.bool(true, "Use MTF Filter", group=grp_mtf)
+mtf_tf = input.timeframe("60", "Higher Timeframe", group=grp_mtf)
+mtf_ema_len = input.int(50, "MTF EMA Length", minval=1, group=grp_mtf)
+
+// ==============================================================================
+// Component 5: MTF Trend Filter
+// ==============================================================================
+// Compute EMA in global scope
+ema_base = ta.ema(close, mtf_ema_len)
+// Get MTF values using tuple
+[mtf_ema_close, mtf_close] = request.security(syminfo.tickerid, mtf_tf, [ema_base, close])
+
+// MTF Trend: True if MTF Close > MTF EMA
+is_mtf_bullish = use_mtf ? (mtf_close > mtf_ema_close) : true
+is_mtf_bearish = use_mtf ? (mtf_close < mtf_ema_close) : true
+
+// ==============================================================================
+// Component 1: Accumulation & Compression (NR4, NR7, NR9)
+// ==============================================================================
+// A narrow range candle is one where the high - low is less than the high - low of the previous N-1 candles.
+range_cur = high - low
+range_min4 = ta.lowest(range_cur[1], 3)
+range_min7 = ta.lowest(range_cur[1], 6)
+range_min9 = ta.lowest(range_cur[1], 8)
+
+is_nr4 = range_cur < range_min4 and bar_index >= 3
+is_nr7 = range_cur < range_min7 and bar_index >= 6
+is_nr9 = range_cur < range_min9 and bar_index >= 8
+
+// Plot NR shapes
+plotshape(show_nr and is_nr4 and not is_nr7 and not is_nr9, title="NR4", text="NR4", style=shape.triangledown, location=location.abovebar, color=color.blue, textcolor=color.blue, size=size.tiny)
+plotshape(show_nr and is_nr7 and not is_nr9, title="NR7", text="NR7", style=shape.triangledown, location=location.abovebar, color=color.purple, textcolor=color.purple, size=size.tiny)
+plotshape(show_nr and is_nr9, title="NR9", text="NR9", style=shape.triangledown, location=location.abovebar, color=color.orange, textcolor=color.orange, size=size.tiny)
+
+// Compression Zone Background
+is_compression = is_nr4 or is_nr7 or is_nr9
+bgcolor(is_compression ? color_nr_bg : na, title="Compression Zone")
+
+// ==============================================================================
+// Component 2: Mother Candle Setup
+// ==============================================================================
+// A Mother Candle is defined as a candle whose high is > highest high of the next N inside bars
+// and low is < lowest low of the next N inside bars. Since we can't look into the future,
+// we detect this setup N bars after the Mother Candle.
+mc_high = high[mc_inside_bars]
+mc_low = low[mc_inside_bars]
+is_mother_candle = true
+
+if bar_index >= mc_inside_bars
+    for i = 0 to mc_inside_bars - 1
+        if high[i] >= mc_high or low[i] <= mc_low
+            is_mother_candle := false
+else
+    is_mother_candle := false
+
+// Plot Mother Candle marker
+plotshape(show_mc and is_mother_candle, title="Mother Candle Setup", text="MC", style=shape.labeldown, location=location.abovebar, offset=-mc_inside_bars, color=color.yellow, textcolor=color.black, size=size.small)
+
+// Keep track of the active Mother Candle high/low for breakout detection
+var float active_mc_high = na
+var float active_mc_low = na
+
+if is_mother_candle
+    active_mc_high := mc_high
+    active_mc_low := mc_low
+
+// ==============================================================================
+// Component 3: Volume Profile & Whale Activity
+// ==============================================================================
+vol_ma = ta.sma(volume, vol_ma_len)
+is_whale_vol = volume > (vol_ma * vol_mult)
+
+var bool was_in_compression = false
+if is_compression
+    was_in_compression := true
+
+// Breakout from Compression
+is_comp_breakout_buy = was_in_compression and not is_compression and close > close[1] and is_whale_vol and is_mtf_bullish
+is_comp_breakout_sell = was_in_compression and not is_compression and close < close[1] and is_whale_vol and is_mtf_bearish
+
+// Reset compression state after a breakout attempt
+if not is_compression
+    was_in_compression := false
+
+// Breakout from Mother Candle
+is_mc_breakout_buy = not na(active_mc_high) and close > active_mc_high and is_whale_vol and is_mtf_bullish
+is_mc_breakout_sell = not na(active_mc_low) and close < active_mc_low and is_whale_vol and is_mtf_bearish
+
+// Invalidate Mother Candle breakout zones if broken
+if not na(active_mc_high) and close > active_mc_high
+    active_mc_high := na
+    active_mc_low := na
+if not na(active_mc_low) and close < active_mc_low
+    active_mc_high := na
+    active_mc_low := na
+
+is_strong_buy = is_comp_breakout_buy or is_mc_breakout_buy
+is_strong_sell = is_comp_breakout_sell or is_mc_breakout_sell
+
+plotshape(is_strong_buy, title="Strong Buy", text="Strong Buy", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.normal)
+plotshape(is_strong_sell, title="Strong Sell", text="Strong Sell", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.normal)
+
+// ==============================================================================
+// Component 4: Supply & Demand Zones
+// ==============================================================================
+ph = ta.pivothigh(high, pivot_len_left, pivot_len_right)
+pl = ta.pivotlow(low, pivot_len_left, pivot_len_right)
+
+var line last_res_line = na
+var label last_res_label = na
+if show_sd and not na(ph)
+    // Seller Zone (Resistance)
+    if not na(last_res_line)
+        line.delete(last_res_line)
+    if not na(last_res_label)
+        label.delete(last_res_label)
+    last_res_line := line.new(bar_index[pivot_len_right], ph, bar_index, ph, color=color.red, style=line.style_solid, width=2, extend=extend.right)
+    last_res_label := label.new(bar_index[pivot_len_right], ph, "Seller Zone", color=na, textcolor=color.red, style=label.style_none, size=size.small)
+
+var line last_sup_line = na
+var label last_sup_label = na
+if show_sd and not na(pl)
+    // Buyer Zone (Support)
+    if not na(last_sup_line)
+        line.delete(last_sup_line)
+    if not na(last_sup_label)
+        label.delete(last_sup_label)
+    last_sup_line := line.new(bar_index[pivot_len_right], pl, bar_index, pl, color=color.green, style=line.style_solid, width=2, extend=extend.right)
+    last_sup_label := label.new(bar_index[pivot_len_right], pl, "Buyer Zone", color=na, textcolor=color.green, style=label.style_none, size=size.small)

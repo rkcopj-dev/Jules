@@ -401,7 +401,7 @@ if long_entry_signal and strategy.position_size == 0 and time_filter_ok
         box.delete(long_pos_box) // Clean up any old box
         long_pos_box := box.new(bar_index, long_final_tp, bar_index, long_stop_loss,
              border_color=color.new(color.green, 40), bgcolor=color.new(color.green, 85), extend=extend.right,
-             text="Long\nTP: " + str.tostring(long_final_tp, '#.##') + "\nSL: " + str.tostring(long_stop_loss, '#.##'))
+             text=str.format("Long\nTP: {0}\nSL: {1}", str.tostring(long_final_tp, '#.##'), str.tostring(long_stop_loss, '#.##')))
 
 if short_entry_signal and strategy.position_size == 0 and time_filter_ok
     short_entry_price := close
@@ -418,7 +418,7 @@ if short_entry_signal and strategy.position_size == 0 and time_filter_ok
         box.delete(short_pos_box) // Clean up
         short_pos_box := box.new(bar_index, short_final_tp, bar_index, short_stop_loss,
              border_color=color.new(color.red, 40), bgcolor=color.new(color.red, 85), extend=extend.right,
-             text="Short\nTP: " + str.tostring(short_final_tp, '#.##') + "\nSL: " + str.tostring(short_stop_loss, '#.##'))
+             text=str.format("Short\nTP: {0}\nSL: {1}", str.tostring(short_final_tp, '#.##'), str.tostring(short_stop_loss, '#.##')))
 
 // -- Trade Management Logic --
 // For Long Positions
